@@ -1,8 +1,3 @@
 streamlit
-pysqlite3-binarysqlite3
-hashlib
-os
-time
-re
-datetime
 streamlit-option-menu
+
