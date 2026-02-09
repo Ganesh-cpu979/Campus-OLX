@@ -4,6 +4,7 @@ import hashlib
 import os
 import time
 import re
+import uuid
 from datetime import datetime
 from streamlit_option_menu import option_menu 
 
@@ -55,6 +56,7 @@ def init_db():
     run_query('CREATE TABLE IF NOT EXISTS reviewstable(seller_name TEXT, buyer_name TEXT, rating INTEGER, comment TEXT)')
     run_query('CREATE TABLE IF NOT EXISTS messages(sender TEXT, receiver TEXT, message TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)')
     run_query('CREATE TABLE IF NOT EXISTS help_requests(id INTEGER PRIMARY KEY, username TEXT, issue TEXT, image_path TEXT, status TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)')
+    run_query('CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, username TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)')
     
     try:
         run_query('INSERT INTO userstable(username, fullname, password, status) VALUES (?,?,?,?)', 
@@ -88,6 +90,17 @@ def view_all_products(): return get_data('SELECT * FROM productstable')
 def add_help_request(user, issue, img_path): run_query('INSERT INTO help_requests(username, issue, image_path, status) VALUES (?,?,?,?)', (user, issue, img_path, 'pending'))
 def view_help_requests(status): return get_data('SELECT * FROM help_requests WHERE status=? ORDER BY timestamp DESC', (status,))
 def resolve_help_request(rid): run_query('UPDATE help_requests SET status=? WHERE id=?', ('resolved', rid))
+# --- SESSION MANAGEMENT ---
+def create_session(username):
+    token = str(uuid.uuid4())
+    run_query('INSERT INTO sessions(token, username) VALUES (?,?)', (token, username))
+    return token
+def validate_session(token):
+    data = get_single_data('SELECT username FROM sessions WHERE token=?', (token,))
+    return data[0] if data else None
+def delete_session(token):
+    run_query('DELETE FROM sessions WHERE token=?', (token,))
+
 def get_avg_rating(s):
     d = get_data('SELECT rating FROM reviewstable WHERE seller_name=?', (s,))
     return round(sum([x[0] for x in d])/len(d), 1) if d else 0
@@ -132,6 +145,21 @@ st.markdown("""
 if 'user' not in st.session_state: st.session_state['user'] = None
 if 'role' not in st.session_state: st.session_state['role'] = None
 if 'chat_target' not in st.session_state: st.session_state['chat_target'] = None
+
+# --- AUTO LOGIN CHECK ---
+if not st.session_state['user']:
+    token = st.query_params.get('token')
+    if token:
+        username = validate_session(token)
+        if username:
+            st.session_state['user'] = username
+            # Fetch role
+            u_data = get_user_details(username)
+            if u_data:
+                st.session_state['role'] = 'admin' if u_data[6] == 'admin' else 'student'
+        else:
+            # Invalid token
+            st.query_params.clear()
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -180,6 +208,11 @@ if choice == "Login":
                         if user_data[6] in ['admin', 'approved']:
                             st.session_state['user'] = username
                             st.session_state['role'] = 'admin' if user_data[6] == 'admin' else 'student'
+                            
+                            # PERSIST SESSION
+                            token = create_session(username)
+                            st.query_params['token'] = token
+
                             st.success(f"Login Successful! Welcome {user_data[1]}") 
                             time.sleep(0.5)
                             st.rerun()
@@ -252,6 +285,10 @@ elif choice == "Sign Up":
                 except Exception as e: st.error("⚠️ User already exists or Database Error.")
 
 elif choice == "Logout":
+    # Clear Session
+    token = st.query_params.get('token')
+    if token: delete_session(token)
+    st.query_params.clear()
     st.session_state['user'] = None; st.session_state['role'] = None; st.rerun()
 
 # ================= ADMIN =================
