@@ -5,3 +5,4 @@ os
 time
 re
 datetime
+streamlit-option-menu
