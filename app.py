@@ -11,7 +11,7 @@ import smtplib
 import ssl
 from email.message import EmailMessage
 from datetime import datetime
-from streamlit_option_menu import option_menu 
+from streamlit_option_menu import option_menu
 
 # --- CONFIGURATION (User must fill this) ---
 # GOOGLE ACCOUNT -> SECURITY -> 2-STEP VERIFICATION -> APP PASSWORDS
@@ -856,3 +856,4 @@ elif st.session_state['role'] == 'student':
         st.info(f"Seller Rating: ⭐ {get_avg_rating(u[0])}/5")
         try: st.image(u[5], width=200)
         except: pass
+
