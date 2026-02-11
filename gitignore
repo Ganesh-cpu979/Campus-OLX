@@ -1,0 +1,15 @@
+# Database file
+*.db
+
+# Image folders (Users ki photos)
+images/
+id_cards/
+help_screenshots/
+payment_proofs/
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# Secrets/Config
+.streamlit/secrets.toml
