@@ -14,9 +14,8 @@ from datetime import datetime
 from streamlit_option_menu import option_menu
 
 # --- CONFIGURATION (User must fill this) ---
-# GOOGLE ACCOUNT -> SECURITY -> 2-STEP VERIFICATION -> APP PASSWORDS
-SENDER_EMAIL = "ganeshjanapuri@gmail.com"  # Replace with your email
-SENDER_PASSWORD = "bofd bzua sgau kzyv"  # Replace with your app password 
+SENDER_EMAIL = "ganeshjanapuri@gmail.com"  
+SENDER_PASSWORD = "bofd bzua sgau kzyv"  
 
 # ----------------------------------------------------
 # 1. DATABASE SETUP
@@ -69,19 +68,12 @@ def init_db():
     run_query('CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, username TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)')
     run_query('CREATE TABLE IF NOT EXISTS orders(id INTEGER PRIMARY KEY AUTOINCREMENT, product_id INTEGER, buyer TEXT, seller TEXT, product_name TEXT, price TEXT, payment_method TEXT, status TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)')
 
-    # Try adding email column if it doesn't exist (Migration)
     try: run_query('ALTER TABLE userstable ADD COLUMN email TEXT')
     except: pass
-    
-    # Try adding payment_proof column to orders (Migration)
     try: run_query('ALTER TABLE orders ADD COLUMN payment_proof TEXT')
     except: pass
-    
-    # Try adding remark column to orders (Migration)
     try: run_query('ALTER TABLE orders ADD COLUMN remark TEXT')
     except: pass
-    
-
     
     try:
         run_query('INSERT INTO userstable(username, fullname, password, status) VALUES (?,?,?,?)', 
@@ -114,8 +106,6 @@ def view_all_users(): return get_data('SELECT * FROM userstable')
 def view_all_products(): return get_data('SELECT * FROM productstable')
 def add_help_request(user, issue, img_path): run_query('INSERT INTO help_requests(username, issue, image_path, status) VALUES (?,?,?,?)', (user, issue, img_path, 'pending'))
 def view_help_requests(status): return get_data('SELECT * FROM help_requests WHERE status=? ORDER BY timestamp DESC', (status,))
-def add_help_request(user, issue, img_path): run_query('INSERT INTO help_requests(username, issue, image_path, status) VALUES (?,?,?,?)', (user, issue, img_path, 'pending'))
-def view_help_requests(status): return get_data('SELECT * FROM help_requests WHERE status=? ORDER BY timestamp DESC', (status,))
 def resolve_help_request(rid): run_query('UPDATE help_requests SET status=? WHERE id=?', ('resolved', rid))
 def add_order(pid, buyer, seller, pname, price, method, proof=None):
     run_query('INSERT INTO orders(product_id, buyer, seller, product_name, price, payment_method, status, payment_proof) VALUES (?,?,?,?,?,?,?,?)', 
@@ -143,7 +133,6 @@ def generate_otp():
     return ''.join(random.choices(string.digits, k=6))
 
 def send_otp_email(receiver_email, otp):
-    # Check if credentials are still placeholders
     if "your_email" in SENDER_EMAIL or "your_app_password" in SENDER_PASSWORD:
         return False, "SIMULATION" 
         
@@ -207,6 +196,10 @@ if 'user' not in st.session_state: st.session_state['user'] = None
 if 'role' not in st.session_state: st.session_state['role'] = None
 if 'chat_target' not in st.session_state: st.session_state['chat_target'] = None
 
+# For multi-step signup
+if 'signup_step' not in st.session_state: st.session_state.signup_step = 1
+if 'signup_data' not in st.session_state: st.session_state.signup_data = {}
+
 # --- AUTO LOGIN CHECK ---
 if not st.session_state['user']:
     token = st.query_params.get('token')
@@ -214,12 +207,10 @@ if not st.session_state['user']:
         username = validate_session(token)
         if username:
             st.session_state['user'] = username
-            # Fetch role
             u_data = get_user_details(username)
             if u_data:
                 st.session_state['role'] = 'admin' if u_data[6] == 'admin' else 'student'
         else:
-            # Invalid token
             st.query_params.clear()
 
 # --- SIDEBAR ---
@@ -233,14 +224,12 @@ with st.sidebar:
         if st.session_state['role'] == 'admin':
             menu = ["Dashboard", "Users", "Products", "Pending Orders", "Completed Orders", "Cancelled Orders", "Issues", "Settings"]
             icons = ['speedometer2', 'people', 'box-seam', 'cart-check', 'check-circle', 'x-circle', 'exclamation-circle', 'gear']
-            choice = option_menu("Menu", menu, icons=icons, default_index=0) # Admin menu simple rakha hai
+            choice = option_menu("Menu", menu, icons=icons, default_index=0) 
         else:
             menu = ["Marketplace", "Sell Item", "Inbox", "Profile"] 
             icons = ['shop', 'plus-circle', 'chat-dots', 'person']
-            # KEY Added for programmatic control 👇
             choice = option_menu("Menu", menu, icons=icons, default_index=0, key='nav_menu')
             
-            # Reset extra_page if menu item is clicked
             if 'last_choice' not in st.session_state: st.session_state['last_choice'] = choice
             if st.session_state['last_choice'] != choice:
                 st.session_state['extra_page'] = None
@@ -291,140 +280,117 @@ if choice == "Login":
     
     st.info("Don't have an account? Go to the Sign Up page in the sidebar.")
 
-
-# ================= SIGN UP =================
+# ================= SIGN UP (NEW MULTI-STEP LOGIC) =================
 elif choice == "Sign Up":
     st.markdown("<h2 style='text-align:center;'>📝 Create Account</h2>", unsafe_allow_html=True)
     dept_map = {"CSE": "CS", "ECE": "EC", "EEE": "EE", "Civil": "CE"}
     
-    # Initialize errors & OTP state
-    if 'signup_errors' not in st.session_state: st.session_state.signup_errors = {}
-    if 'signup_otp' not in st.session_state: st.session_state.signup_otp = None
-    if 'email_verified' not in st.session_state: st.session_state.email_verified = False
-    
-    errors = st.session_state.signup_errors
+    # --- STEP 1: Upload & Details ---
+    if st.session_state.signup_step == 1:
+        st.info("Step 1: Identity & Details")
+        c1, c2 = st.columns(2)
+        
+        with c1:
+            full_name = st.text_input("Full Name", max_chars=10, help="Max 10 characters")
+            password = st.text_input("Password", type='password', help="Min 8 characters")
+            year = st.selectbox("Year", ["1st Year", "2nd Year", "Final Year"])
+            email = st.text_input("Email Address")
+            id_front = st.file_uploader("ID Card Front Side", type=['jpg', 'png'])
 
-    # REMOVED st.form wrapper to allow interactive OTP buttons
-    c1, c2 = st.columns(2)
-    
-    with c1:
-        full_name = st.text_input("Full Name", max_chars=10, help="Max 10 characters")
-        if 'name' in errors: st.error(errors['name'])
-        
-        password = st.text_input("Password", type='password', help="Min 8 characters")
-        if 'password' in errors: st.error(errors['password'])
-        
-        year = st.selectbox("Year", ["1st Year", "2nd Year", "Final Year"])
-        
-        # Email Verification UI
-        email = st.text_input("Email Address")
-        if 'email' in errors: st.error(errors['email'])
+        with c2:
+            username = st.text_input("Roll Number")
+            course = st.selectbox("Branch", ["CSE", "ECE", "EEE", "Civil"])
+            id_back = st.file_uploader("ID Card Back Side", type=['jpg', 'png'])
 
-    with c2:
-        username = st.text_input("Roll Number")
-        if 'username' in errors: st.error(errors['username'])
+        if st.button("Next ➡️", use_container_width=True):
+            errors = []
+            if not full_name: errors.append("Enter Name")
+            if not password or len(password) < 8: errors.append("Password min 8 chars")
+            if not username: errors.append("Enter Roll No")
+            elif dept_map[course] not in username.upper(): errors.append(f"Roll No must contain '{dept_map[course]}'")
+            if not email or not re.match(r"[^@]+@[^@]+\.[^@]+", email): errors.append("Invalid Email")
+            if not id_front or not id_back: errors.append("Upload both sides of ID Card")
+
+            if errors:
+                for e in errors: st.error(f"⚠️ {e}")
+            else:
+                # Save front side to DB (as table only has one image column)
+                path = save_uploaded_file(id_front, "id_cards")
+                # Can also save back side if needed, but DB schema expects one path
+                _ = save_uploaded_file(id_back, "id_cards") 
+                
+                st.session_state.signup_data = {
+                    "username": username, "fullname": full_name, "password": make_hashes(password), 
+                    "course": course, "year": year, "email": email, "id_card_path": path
+                }
+                st.session_state.signup_step = 2
+                st.rerun()
+
+    # --- STEP 2: Verification ---
+    elif st.session_state.signup_step == 2:
+        st.info("Step 2: Identity Verification")
+        st.write("🔍 **Please check if your ID Card photo is clear:**")
+        st.image(st.session_state.signup_data["id_card_path"], width=300)
         
-        course = st.selectbox("Branch", ["CSE", "ECE", "EEE", "Civil"])
+        confirm_clear = st.radio("Is the text on ID card readable?", ["Yes, it's clear", "No, let me re-upload"])
         
-        id_card = st.file_uploader("ID Card Photo", type=['jpg', 'png'])
-        if 'id_card' in errors: st.error(errors['id_card']) 
-    
-    # --- EMAIL OTP SECTION (Outside Form for interactivity) ---
-    c_otp1, c_otp2 = st.columns([2, 1])
-    with c_otp1:
-        if not st.session_state.email_verified:
-            if st.button("Send/Verify Email OTP"):
-                if email and re.match(r"[^@]+@[^@]+\.[^@]+", email):
-                     otp = generate_otp()
-                     st.session_state.signup_otp = otp
-                     
-                     # SEND REAL EMAIL
-                     with st.spinner("Sending OTP..."):
-                         success, message = send_otp_email(email, otp)
-                     
-                     if success:
-                         st.success(message)
-                     elif message == "SIMULATION":
-                         st.warning("⚠️ Email not configured. Using **Simulation Mode**.")
-                         st.info(f"🔑 Your OTP is: **{otp}**")
-                     else:
-                         st.error(message)
-                         # Fallback for demo (remove in production)
-                         st.info(f"DEMO MODE: OTP is {otp}") 
-                else: st.error("Invalid Email")
-    
-    with c_otp2:
-        if st.session_state.signup_otp and not st.session_state.email_verified:
-            otp_input = st.text_input("Enter OTP", key="otp_in")
-            if st.button("Confirm OTP"):
-                if otp_input == st.session_state.signup_otp:
-                    st.session_state.email_verified = True
-                    st.success("✅ Email Verified!")
+        if confirm_clear == "No, let me re-upload":
+            if st.button("⬅️ Back to Upload"):
+                st.session_state.signup_step = 1
+                st.rerun()
+        else:
+            st.divider()
+            c_otp1, c_otp2 = st.columns([2, 1])
+            with c_otp1:
+                st.write(f"OTP will be sent to: **{st.session_state.signup_data['email']}**")
+                if st.button("Send/Verify Email OTP"):
+                    otp = generate_otp()
+                    st.session_state.signup_otp = otp
+                    with st.spinner("Sending OTP..."):
+                        success, message = send_otp_email(st.session_state.signup_data['email'], otp)
+                    if success: st.success(message)
+                    elif message == "SIMULATION":
+                        st.warning("⚠️ Email not configured. Using **Simulation Mode**.")
+                        st.info(f"🔑 Your OTP is: **{otp}**")
+                    else:
+                        st.error(message)
+                        st.info(f"DEMO MODE: OTP is {otp}") 
+            
+            with c_otp2:
+                if 'signup_otp' in st.session_state:
+                    otp_input = st.text_input("Enter OTP")
+                    if st.button("Confirm OTP"):
+                        if otp_input == st.session_state.signup_otp:
+                            st.session_state.signup_step = 3
+                            st.rerun()
+                        else: st.error("❌ Invalid OTP")
+
+    # --- STEP 3: Terms & Create ---
+    elif st.session_state.signup_step == 3:
+        st.info("Step 3: Terms & Conditions")
+        with st.expander("📜 Read Terms & Conditions", expanded=True):
+            st.markdown("""
+            1. **Campus Use Only**: This platform is strictly for students and faculty of our campus.
+            2. **Legal Items Only**: Selling illegal, prohibited, or harmful items is forbidden.
+            3. **Respectful Conduct**: Treat all users with respect.
+            4. **Honest Listing**: Describe items accurately.
+            """)
+        agree_terms = st.checkbox("I agree to the Terms and Conditions")
+        
+        if st.button("Create Account 🚀", type="primary", use_container_width=True):
+            if agree_terms:
+                d = st.session_state.signup_data
+                try:
+                    add_userdata(d['username'], d['fullname'], d['password'], d['course'], d['year'], d['id_card_path'], d['email'])
+                    st.balloons()
+                    st.success("✅ Account created! Waiting for Admin Approval.")
+                    st.session_state.signup_step = 1
+                    st.session_state.signup_data = {}
+                    time.sleep(2)
                     st.rerun()
-                else: st.error("❌ Invalid OTP")
-        elif st.session_state.email_verified:
-            st.success("✅ Email Verified")
-
-    # Main Submission Button (Outside 'with st.form' effectively or separate)
-    # The previous form block ended. We can't have partial form. 
-    # Let's restructure: Main inputs in form, but OTP MUST be separate for interactivity.
-    # OR: Everything in one form, but OTP validation happens on submit (less ideal).
-    # BETTER: Input fields -> OTP Button -> Verify Button -> Submit Button.
-    
-    # RE-WRITING THE UI FLOW FOR BETTER INTERACTIVITY
-    
-    # --- Terms & Conditions ---
-    with st.expander("📜 Read Terms & Conditions"):
-        st.markdown("""
-        1. **Campus Use Only**: This platform is strictly for students and faculty of our campus.
-        2. **Legal Items Only**: Selling illegal, prohibited, or harmful items is forbidden.
-        3. **Respectful Conduct**: Treat all users with respect.
-        4. **Honest Listing**: Describe items accurately.
-        """)
-    agree_terms = st.checkbox("I agree to the Terms and Conditions")
-    if 'terms' in errors: st.error(errors['terms'])
-
-    submitted = st.button("Create Account", type="primary", use_container_width=True)
-    
-    if submitted:
-        new_errors = {}
-        
-        # Validation Logic
-        if not agree_terms: new_errors['terms'] = "⚠️ You must agree to the Terms & Conditions"
-
-        if not full_name: new_errors['name'] = "⚠️ Enter Name"
-        elif len(full_name) > 10: new_errors['name'] = "⚠️ Max 10 chars"
-        elif not re.match(r"^[a-zA-Z\s]+$", full_name): new_errors['name'] = "⚠️ Alphabets only"
-        
-        if not password: new_errors['password'] = "⚠️ Enter Password"
-        elif len(password) < 8: new_errors['password'] = "⚠️ Min 8 chars"
-        
-        if not username: new_errors['username'] = "⚠️ Enter Roll No"
-        else:
-            required_code = dept_map[course]
-            if required_code not in username.upper():
-                new_errors['username'] = f"⚠️ Must contain '{required_code}'"
-        
-        if not id_card: new_errors['id_card'] = "⚠️ Upload ID"
-        
-        if not email: new_errors['email'] = "⚠️ Enter Email"
-        elif not st.session_state.email_verified: new_errors['email'] = "⚠️ Please Verify Email First"
-
-        if new_errors:
-            st.session_state.signup_errors = new_errors
-            st.rerun()
-        else:
-            st.session_state.signup_errors = {} 
-            path = save_uploaded_file(id_card, "id_cards")
-            try:
-                add_userdata(username, full_name, make_hashes(password), course, year, path, email)
-                st.balloons()
-                st.success("✅ Account created! Waiting for Admin Approval.")
-                # Reset state
-                st.session_state.email_verified = False
-            except Exception as e: st.error(f"⚠️ Error: {e}")
-
-
+                except Exception as e: st.error(f"⚠️ Error: {e}")
+            else:
+                st.error("⚠️ You must agree to the Terms & Conditions")
 
 # ================= STUDENT EXTRA PAGES =================
 elif st.session_state['role'] == 'student' and st.session_state.get('extra_page'):
@@ -459,7 +425,6 @@ elif st.session_state['role'] == 'student' and st.session_state.get('extra_page'
                         path = save_uploaded_file(screenshot, "help_screenshots")
                     
                     add_help_request(st.session_state['user'], issue, path)
-                    # Also send a chat message notification
                     send_message(st.session_state['user'], 'admin', f"HELP REQUEST: {issue} (See Issues Tab)")
                     st.success("Ticket Created! Admin will review it.")
                 else:
@@ -479,7 +444,6 @@ elif st.session_state['role'] == 'admin':
     elif choice == "Users":
         st.subheader("Manage Users")
         
-        # Pending Requests
         pending_users = view_users_by_status('pending')
         if pending_users:
             st.write(f"### Pending Requests ({len(pending_users)})")
@@ -503,12 +467,11 @@ elif st.session_state['role'] == 'admin':
             
         st.divider()
         
-# All Users Management
         st.write("### All Users")
         all_users = view_all_users()
         if all_users:
             for u in all_users:
-                if u[6] == 'admin': continue # Skip admin
+                if u[6] == 'admin': continue 
                 with st.container():
                     c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
                     c1.write(f"**{u[1]}**")
@@ -522,7 +485,6 @@ elif st.session_state['role'] == 'admin':
     elif choice == "Products":
         st.subheader("Manage Products")
         
-        # Pending Products
         pending_products = view_products('pending')
         if pending_products:
             st.write(f"### Pending Approvals ({len(pending_products)})")
@@ -545,7 +507,6 @@ elif st.session_state['role'] == 'admin':
             
         st.divider()
         
-        # All Products Management
         st.write("### All Products")
         all_prods = view_all_products()
         if all_prods:
@@ -558,8 +519,6 @@ elif st.session_state['role'] == 'admin':
                     if c4.button("Remove", key=f"del_p_{p[0]}"):
                         delete_product(p[0])
                         st.rerun()
-                    st.divider()
-
                     st.divider()
 
     elif choice == "Issues":
@@ -586,10 +545,6 @@ elif st.session_state['role'] == 'admin':
         orders = view_orders_by_status('Ordered')
         if orders:
             for o in orders:
-                # o[7] is status, o[8] is proof (if schema matches migration)
-                # Schema: id, pid, buyer, seller, pname, price, method, status, time, proof
-                # Because of migration, indices might shift if table was dropped/recreated differently.
-                # Assuming `payment_proof` is last added column. Index 9 based on CREATE stmt + 1 migration col
                 status = o[7]; method = o[6]
                 
                 with st.expander(f"Order #{o[0]}: {o[4]}", expanded=True):
@@ -600,16 +555,12 @@ elif st.session_state['role'] == 'admin':
                     st.write(f"**Price:** ₹{o[5]}")
                     
                     if status == 'Cancelled':
-                        st.error(f"Cancelled: {o[-1]}") # Remark is likely last
+                        st.error(f"Cancelled: {o[-1]}") 
                     
-                    # Show Screenshot if Online
                     if method == "Online (Pay to Admin)":
                         try:
-                            # Robustly find proof column
                             proof_path = o[9] if len(o) > 9 else None
-                            
                             if proof_path:
-                                # Fix path for display
                                 abs_path = os.path.abspath(proof_path)
                                 if os.path.exists(abs_path):
                                     st.image(abs_path, caption="Payment Proof", width=300)
@@ -624,7 +575,7 @@ elif st.session_state['role'] == 'admin':
                     
                     if b1.button("Mark Completed", key=f"ord_c_{o[0]}"):
                         update_order_status(o[0], 'Completed')
-                        mark_product_sold(o[1]) # Ensure it's marked sold
+                        mark_product_sold(o[1]) 
                         st.success("Order Completed & Item Sold")
                         st.rerun()
                     
@@ -635,7 +586,6 @@ elif st.session_state['role'] == 'admin':
                                 st.warning("Order Cancelled & Item Restored")
                                 st.rerun()
 
-                    # Chat Buttons (Always visible)
                     with st.expander(f"Chat with Buyer ({o[2]})"):
                         st.write(f"Chatting with Buyer of Order #{o[0]}")
                         msgs = get_messages('admin', o[2])
@@ -675,7 +625,6 @@ elif st.session_state['role'] == 'admin':
                     st.write(f"**Price:** ₹{o[5]}")
                     st.success("✅ Order Completed")
 
-                    # Chat Buttons (Read-onlyish or just for history)
                     with st.expander("View Chat History"):
                         tab1, tab2 = st.tabs(["Buyer Chat", "Seller Chat"])
                         with tab1:
@@ -699,14 +648,12 @@ elif st.session_state['role'] == 'admin':
                     c3.write(f"**Method:** {o[6]}")
                     st.write(f"**Price:** ₹{o[5]}")
                     
-                    # Try to fetch remark. It's usually the last column or one of the last
                     remark = "No remark"
-                    if len(o) > 10: remark = o[10] # Based on assumption of column order
-                    elif len(o) > 0: remark = o[-1] # Fallback
+                    if len(o) > 10: remark = o[10] 
+                    elif len(o) > 0: remark = o[-1] 
                     
                     st.error(f"❌ Cancelled. Reason: {remark}")
 
-                    # Chat Buttons
                     with st.expander("View Chat History"):
                         tab1, tab2 = st.tabs(["Buyer Chat", "Seller Chat"])
                         with tab1:
@@ -751,19 +698,16 @@ elif st.session_state['role'] == 'student':
                     st.markdown(f"**₹{p[4]}**" if p[7] == 'Sell' else "<span style='color:green'>🎁 FREE</span>", unsafe_allow_html=True)
                     st.caption(f"Seller: {p[1]}")
                     
-                    # --- APP LOGIC: BUYING FLOW ---
                     if p[1] != st.session_state['user']: 
-                        if st.button(f"Buy Now �️", key=f"buy_{p[0]}"):
+                        if st.button(f"Buy Now 🛒", key=f"buy_{p[0]}"):
                             st.session_state['buying_product'] = p
                             st.rerun()
                     else:
                         st.button("Your Item", disabled=True, key=f"dis_{p[0]}")
                     st.divider()
 
-        # --- BUYING DIALOG / INTERFACE ---
         if 'buying_product' in st.session_state and st.session_state['buying_product']:
             p = st.session_state['buying_product']
-            # REMOVED st.form to allow file_uploader to trigger rerun and update state immediately
             st.write(f"### Buying: {p[2]}")
             st.write(f"Price: ₹{p[4]}")
             method = st.radio("Payment Method", ["Cash", "Online (Pay to Admin)"])
@@ -775,7 +719,6 @@ elif st.session_state['role'] == 'student':
                     proof_file = st.file_uploader("Upload Payment Screenshot (Required)", type=['jpg', 'png', 'jpeg'])
                     
                     if proof_file:
-                        # Save proof
                         if not os.path.exists("payment_proofs"): os.makedirs("payment_proofs")
                         proof_path = os.path.join("payment_proofs", f"proof_{p[0]}_{st.session_state['user']}.png")
                         with open(proof_path, "wb") as f: f.write(proof_file.getbuffer())
@@ -784,13 +727,11 @@ elif st.session_state['role'] == 'student':
                 else:
                     st.warning("⚠️ Admin QR not set. Please use Cash or contact Admin.")
             
-            # Button Logic
             if method == "Online (Pay to Admin)" and not proof_path:
                 st.button("Confirm Order (Upload Proof First)", disabled=True)
             else:
                 if st.button("Confirm Order"):
                     add_order(p[0], st.session_state['user'], p[1], p[2], p[4], method, proof_path)
-                    # MARK SOLD
                     mark_product_sold(p[0])
                     
                     st.balloons()
@@ -807,21 +748,18 @@ elif st.session_state['role'] == 'student':
     elif choice == "Inbox":
         st.title("📩 Inbox (Chat with Admin)")
         
-        # Hardcode chat to Admin
         active_chat = 'admin'
         
-        # Display Messages
         msgs = get_messages(st.session_state['user'], active_chat)
         if msgs:
             for m in msgs:
                 align = "right" if m[0] == st.session_state['user'] else "left"
                 bg_color = '#dcf8c6' if align=='right' else '#f1f0f0'
                 st.markdown(f"<div style='text-align: {align}; padding: 10px; border-radius: 10px; background-color: {bg_color}; margin: 5px; display: inline-block; max-width: 80%;'><b>{m[0]}</b>: {m[2]}</div>", unsafe_allow_html=True)
-                st.write("") # Spacer
+                st.write("") 
         else:
             st.info("No messages with Admin yet.")
 
-        # Send Message
         st.write("---")
         with st.form("chat_admin", clear_on_submit=True):
             msg = st.text_input("Type a message to Admin...")
@@ -847,8 +785,6 @@ elif st.session_state['role'] == 'student':
                     st.success("Listed for Approval!")
                 else: st.error("Name & Image required.")
 
-
-
     elif choice == "Profile":
         u = get_user_details(st.session_state['user'])
         st.markdown(f"## 👤 {u[1]}")
@@ -856,4 +792,3 @@ elif st.session_state['role'] == 'student':
         st.info(f"Seller Rating: ⭐ {get_avg_rating(u[0])}/5")
         try: st.image(u[5], width=200)
         except: pass
-
