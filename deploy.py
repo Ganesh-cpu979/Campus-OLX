@@ -20,7 +20,7 @@ SENDER_PASSWORD = "bofd bzua sgau kzyv"
 # ----------------------------------------------------
 # 1. DATABASE SETUP (CLOUD POSTGRESQL)
 # ----------------------------------------------------
-# Streamlit secrets se URL uthayega (Niche instructions dekhna)
+# Streamlit secrets se URL uthayega
 try:
     DB_URL = st.secrets["DB_URL"]
 except:
@@ -51,7 +51,6 @@ def get_single_data(query, params=()):
             c.execute(query, params)
             return c.fetchone()
 
-# Postgres use SERIAL instead of AUTOINCREMENT, and TIMESTAMP instead of DATETIME
 def init_db():
     run_query('CREATE TABLE IF NOT EXISTS userstable(username TEXT PRIMARY KEY, fullname TEXT, password TEXT, course TEXT, year TEXT, id_card_path TEXT, status TEXT, email TEXT)')
     run_query('CREATE TABLE IF NOT EXISTS productstable(id SERIAL PRIMARY KEY, seller_name TEXT, product_name TEXT, product_cat TEXT, product_price TEXT, product_desc TEXT, product_img TEXT, type TEXT, status TEXT)')
@@ -295,8 +294,11 @@ with st.sidebar:
             st.query_params.clear()
             st.session_state['user'] = None; st.session_state['role'] = None; st.rerun()
     else:
-        choice = option_menu("Welcome", ["Login", "Student Sign Up", "Middle Man Login", "Middle Man Sign Up"], 
-                             icons=['box-arrow-in-right', 'person-plus', 'box-arrow-in-right', 'person-plus'], default_index=0)
+        # === NAYE MENUS (ABOUT US & HOW TO USE) YAHAN ADD HAIN ===
+        choice = option_menu("Welcome", 
+                             ["Login", "Student Sign Up", "Middle Man Login", "Middle Man Sign Up", "How to Use", "About Us"], 
+                             icons=['box-arrow-in-right', 'person-plus', 'box-arrow-in-right', 'person-plus', 'book', 'info-circle'], 
+                             default_index=0)
 
 if not st.session_state['user']:
     if choice == "Login":
@@ -465,6 +467,61 @@ if not st.session_state['user']:
                         register_middleman_email(st.session_state.mm_email)
                         st.success("✅ Registered Successfully! Please Login.")
                         st.session_state.mm_verified = False
+
+    # ====== HOW TO USE ======
+    elif choice == "How to Use":
+        st.markdown("<h1 style='text-align:center;'>📖 How to Use Campus OLX</h1>", unsafe_allow_html=True)
+        st.markdown("""
+        <div style="background: rgba(30, 30, 30, 0.4); backdrop-filter: blur(12px); border-radius: 15px; padding: 30px; border: 1px solid rgba(255,255,255,0.1); margin-top: 20px;">
+            <h3 style="color: #4facfe;">🎓 For Students</h3>
+            <ol style="color: #e2e8f0; line-height: 1.8; font-size: 16px;">
+                <li><b>Sign Up:</b> Register using your College Roll Number and official email. Upload your ID card for verification.</li>
+                <li><b>Wait for Approval:</b> The Admin will securely verify your identity and approve your account.</li>
+                <li><b>Buy Items:</b> Browse the student marketplace. If you need an item, click "Contact Seller" to directly message the Middleman handling it.</li>
+                <li><b>Sell Items:</b> Navigate to "Handover to Middleman". Select an active Middleman from the list and send them your item details. They will collect the item from you and post it online.</li>
+            </ol>
+            <br>
+            <h3 style="color: #00f2fe;">🤝 For Middlemen</h3>
+            <ol style="color: #e2e8f0; line-height: 1.8; font-size: 16px;">
+                <li><b>Get Authorized:</b> You cannot sign up directly. The Admin must pre-approve your email address first.</li>
+                <li><b>Post Items:</b> Once a student hands over an item, log in, take a photo, and list it in the "Sell Item" section.</li>
+                <li><b>Handle Deals:</b> Negotiate and chat with interested buyers in your "Inbox". Once a physical deal is done, click "Mark as Sold" to update the marketplace.</li>
+            </ol>
+            <br>
+            <h3 style="color: #4facfe;">🛠️ General Help</h3>
+            <ul style="color: #e2e8f0; line-height: 1.8; font-size: 16px;">
+                <li>Use the <b>Help & Support</b> tab inside your dashboard to send a direct issue ticket (with screenshots) to the Admin.</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ====== ABOUT US ======
+    elif choice == "About Us":
+        st.markdown("<h1 style='text-align:center;'>ℹ️ About Us</h1>", unsafe_allow_html=True)
+        st.markdown("""
+        <div style="background: rgba(30, 30, 30, 0.4); backdrop-filter: blur(12px); border-radius: 15px; padding: 30px; border: 1px solid rgba(255,255,255,0.1); margin-top: 20px;">
+            <h3 style="color: #4facfe;">🌟 Our Vision</h3>
+            <p style="color: #e2e8f0; font-size: 16px; line-height: 1.6;">
+                To build a seamless, secure, and sustainable localized marketplace that connects students within the campus, making academic resources accessible and affordable for everyone.
+            </p>
+            <br>
+            <h3 style="color: #00f2fe;">🚀 Our Mission</h3>
+            <p style="color: #e2e8f0; font-size: 16px; line-height: 1.6;">
+                To empower the student community by providing a dedicated platform to easily exchange pre-owned books, electronics, drafters, and stationery. We aim to reduce waste, save money, and foster a strong culture of mutual support among engineering and diploma peers.
+            </p>
+            <br>
+            <h3 style="color: #4facfe;">👨‍💻 Developed By</h3>
+            <p style="color: #e2e8f0; font-size: 16px; margin-bottom: 5px;">This project is proudly designed and developed by:</p>
+            <ul style="color: #e2e8f0; font-size: 16px; line-height: 1.8;">
+                <li><b>Ganesh</b> <span style="color:#00f2fe;">(Team Lead)</span></li>
+                <li><b>Siaram</b></li>
+                <li><b>Navyasri</b></li>
+                <li><b>Akshitya</b></li>
+                <li><b>Mrigank</b></li>
+                <li><b>Manish</b></li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
 
 else:
     if st.session_state['role'] == 'student':
