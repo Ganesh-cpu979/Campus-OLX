@@ -1,4 +1,6 @@
 streamlit
 streamlit-option_menu
+psycopg2-binary
+
 
 
