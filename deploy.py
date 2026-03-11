@@ -378,7 +378,7 @@ if not st.session_state['user']:
 
     elif choice == "How to Use":
         st.markdown("<h1 style='text-align:center;'>📖 How to Use Campus OLX</h1>", unsafe_allow_html=True)
-        st.markdown("<div style='background: rgba(30, 30, 30, 0.4); backdrop-filter: blur(12px); border-radius: 15px; padding: 30px; border: 1px solid rgba(255,255,255,0.1); margin-top: 20px;'><h3 style='color: #4facfe;'>🎓 For Students</h3><ol style='color: #e2e8f0; line-height: 1.8; font-size: 16px;'><li><b>Browse:</b> View marketplace items freely.</li><li><b>Subscription:</b> Pay ₹1 fee only when you try to Contact a Seller or List an item.</li><li><b>Buy & Sell:</b> Chat securely.</li><li><b>Deals:</b> Both seller and buyer must confirm an order. Orders can be cancelled with a reason, restoring the item to the marketplace.</li></ol></div>", unsafe_allow_html=True)
+        st.markdown("<div style='background: rgba(30, 30, 30, 0.4); backdrop-filter: blur(12px); border-radius: 15px; padding: 30px; border: 1px solid rgba(255,255,255,0.1); margin-top: 20px;'><h3 style='color: #4facfe;'>🎓 For Students</h3><ol style='color: #e2e8f0; line-height: 1.8; font-size: 16px;'><li><b>Browse:</b> View marketplace items freely.</li><li><b>Subscription:</b> Pay ₹1 fee only when you try to Contact a Seller or List an item.</li><li><b>Buy & Sell:</b> Chat securely with built-in filters.</li><li><b>Deals:</b> Both seller and buyer must confirm an order. Orders can be cancelled with a reason, restoring the item to the marketplace.</li></ol></div>", unsafe_allow_html=True)
 
     elif choice == "About Us":
         st.markdown("<h1 style='text-align:center;'>ℹ️ About Us</h1>", unsafe_allow_html=True)
@@ -435,7 +435,6 @@ else:
                         st.caption(f"Category: {p[3]} | Seller: {p[1]}")
                         
                         if p[1] != st.session_state['user']:
-                            # Subcription check is done when button is clicked!
                             if st.button(f"Contact Seller", key=f"buy_{p[0]}", use_container_width=True):
                                 if not is_subscribed:
                                     st.session_state.show_payment_wall = True
@@ -456,7 +455,6 @@ else:
                     imgs = st.file_uploader("Upload Photos (Multiple allowed)", type=['jpg', 'png'], accept_multiple_files=True)
                     
                     if st.form_submit_button("Submit for Approval 🚀"):
-                        # Check subscription on submit
                         if not is_subscribed:
                             st.session_state.show_payment_wall = True
                             st.rerun()
