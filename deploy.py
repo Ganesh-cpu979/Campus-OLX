@@ -15,8 +15,8 @@ from datetime import datetime
 from streamlit_option_menu import option_menu
 
 # --- CONFIGURATION (User must fill this) ---
-SENDER_EMAIL = "your mail"  
-SENDER_PASSWORD = "two step mail verification password"  
+SENDER_EMAIL = "ganeshjanapuri@gmail.com"  
+SENDER_PASSWORD = "bofd bzua sgau kzyv"  
 ADMIN_UPI_ID = "ganesh@ybl"  # YAHAN APNI ASLI UPI ID DAALNA (For Subscription)
 
 # ----------------------------------------------------
