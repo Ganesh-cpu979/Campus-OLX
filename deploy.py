@@ -928,5 +928,4 @@ else:
                         if c2.button("Mark as Resolved ✅", key=f"res_{t[0]}", type="primary"):
                             resolve_ticket(t[0])
                             st.success("Ticket Resolved!"); time.sleep(1); st.rerun()
-            else: st.success("No pending issues! Everything is looking good. ✨")here
-
+            else: st.success("No pending issues! Everything is looking good. ✨")
