@@ -55,7 +55,7 @@ def init_db():
     run_query('CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, username TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)')
     run_query('CREATE TABLE IF NOT EXISTS delivery_agent_emails(email TEXT PRIMARY KEY, registered INTEGER DEFAULT 0)')
     run_query('CREATE TABLE IF NOT EXISTS help_tickets(id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, issue TEXT, image_path TEXT, status TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)')
-    run_query('CREATE TABLE IF NOT EXISTS deals(id INTEGER PRIMARY KEY AUTOINCREMENT, product_id INTEGER, seller TEXT, buyer TEXT, delivery_mode TEXT, status TEXT, cancel_reason TEXT)')
+    run_query('CREATE TABLE IF NOT EXISTS deals(id INTEGER PRIMARY KEY AUTOINCREMENT, product_id INTEGER, seller TEXT, buyer TEXT, delivery_mode TEXT, payment_mode TEXT, status TEXT, cancel_reason TEXT)')
     
     # Migrations
     try: run_query('ALTER TABLE userstable ADD COLUMN is_subscribed INTEGER DEFAULT 0')
@@ -65,6 +65,8 @@ def init_db():
     try: run_query('ALTER TABLE help_tickets ADD COLUMN image_path TEXT')
     except: pass
     try: run_query('ALTER TABLE deals ADD COLUMN cancel_reason TEXT')
+    except: pass
+    try: run_query('ALTER TABLE deals ADD COLUMN payment_mode TEXT DEFAULT "Cash on Delivery"')
     except: pass
 
     try:
@@ -100,8 +102,8 @@ def add_product(seller_name, name, cat, price, desc, img_paths, p_type, status='
     run_query('INSERT INTO productstable(seller_name, product_name, product_cat, product_price, product_desc, product_img, type, status) VALUES (?,?,?,?,?,?,?,?)', 
               (seller_name, name, cat, price, desc, img_paths, p_type, status))
 
-def propose_deal(product_id, seller, buyer, delivery_mode):
-    run_query("INSERT INTO deals(product_id, seller, buyer, delivery_mode, status) VALUES (?,?,?,?, 'Proposed')", (product_id, seller, buyer, delivery_mode))
+def propose_deal(product_id, seller, buyer, delivery_mode, payment_mode):
+    run_query("INSERT INTO deals(product_id, seller, buyer, delivery_mode, payment_mode, status) VALUES (?,?,?,?,?, 'Proposed')", (product_id, seller, buyer, delivery_mode, payment_mode))
 
 def confirm_deal(deal_id, product_id):
     run_query("UPDATE deals SET status='Confirmed' WHERE id=?", (deal_id,))
@@ -409,6 +411,11 @@ if not st.session_state['user']:
                 else:
                     path = save_uploaded_file(id_front)
                     st.session_state.signup_data = { "username": username, "fullname": full_name, "course": course, "year": year, "id_card_path": path }
+                    
+                    # Ensure fresh state for OTP section
+                    if 'signup_otp' in st.session_state: del st.session_state['signup_otp']
+                    if 'otp_time' in st.session_state: del st.session_state['otp_time']
+                    
                     st.session_state.signup_step = 2
                     st.rerun()
 
@@ -418,25 +425,47 @@ if not st.session_state['user']:
             
             col1, col2 = st.columns([1,1])
             with col1:
-                if st.button("Send Verification OTP"):
-                    if not re.match(r"[^@]+@[^@]+\.[^@]+", email): st.error("Invalid Email")
-                    elif is_email_taken(email): st.error("❌ Email already in use!")
+                # --- LIVE 30-SEC OTP TIMER LOGIC ---
+                if 'signup_otp' not in st.session_state:
+                    if st.button("Send Verification OTP"):
+                        if not re.match(r"[^@]+@[^@]+\.[^@]+", email): st.error("Invalid Email")
+                        elif is_email_taken(email): st.error("❌ Email already in use!")
+                        else:
+                            st.session_state.signup_data['email'] = email
+                            st.session_state.signup_otp = generate_otp()
+                            with st.spinner("Sending OTP securely..."):
+                                send_otp_email(email, st.session_state.signup_otp)
+                            st.session_state.otp_time = time.time()
+                            st.rerun()
+                else:
+                    elapsed = int(time.time() - st.session_state.get('otp_time', 0))
+                    if elapsed < 30:
+                        # 30-sec cooldown live update
+                        st.button(f"⏳ Resend OTP in {30 - elapsed}s", disabled=True)
+                        time.sleep(1)
+                        st.rerun() # Forces page to refresh and update timer
                     else:
-                        st.session_state.signup_data['email'] = email
-                        st.session_state.signup_otp = generate_otp()
-                        with st.spinner("Sending OTP securely..."):
-                            send_otp_email(email, st.session_state.signup_otp)
-                        st.success("OTP Sent!")
+                        if st.button("🔄 Resend OTP"):
+                            st.session_state.signup_otp = generate_otp()
+                            with st.spinner("Resending OTP..."):
+                                send_otp_email(st.session_state.signup_data['email'], st.session_state.signup_otp)
+                            st.session_state.otp_time = time.time()
+                            st.rerun()
+            
             with col2:
+                if 'signup_otp' in st.session_state:
+                    st.success("✅ OTP Sent!")
                 otp_input = st.text_input("Enter OTP sent to email").strip()
             
             password = st.text_input("Setup Password", type='password')
             
             c3, c4 = st.columns(2)
-            if c3.button("⬅️ Go Back"): st.session_state.signup_step = 1; st.rerun()
+            if c3.button("⬅️ Go Back"): 
+                st.session_state.signup_step = 1
+                st.rerun()
             if c4.button("Verify & Continue ➡️"):
                 if 'signup_otp' not in st.session_state or otp_input != st.session_state.signup_otp: st.error("❌ Incorrect or missing OTP")
-                elif len(password) < 8: st.error("Password must be 8+ chars")
+                elif len(password) < 8: st.error("Password must be at least 8 characters")
                 else:
                     st.session_state.signup_data['password'] = make_hashes(password)
                     st.session_state.signup_step = 3
@@ -495,7 +524,7 @@ if not st.session_state['user']:
 
     elif choice == "How to Use":
         st.markdown("<h1 style='text-align:center;'>📖 How to Use Campus OLX</h1>", unsafe_allow_html=True)
-        st.markdown("<div style='background: rgba(30, 30, 30, 0.4); backdrop-filter: blur(12px); border-radius: 15px; padding: 30px; border: 1px solid rgba(255,255,255,0.1); margin-top: 20px;'><h3 style='color: #4facfe;'>🎓 For Students</h3><ol style='color: #e2e8f0; line-height: 1.8; font-size: 16px;'><li><b>Browse:</b> View marketplace items freely.</li><li><b>Subscription:</b> Pay ₹1 fee only when you try to Contact a Seller or List an item.</li><li><b>Deals:</b> Buyer confirms an order with a delivery option, Seller accepts it. Then Buyer can choose COD or Upload UPI Screenshot directly in chat!</li></ol></div>", unsafe_allow_html=True)
+        st.markdown("<div style='background: rgba(30, 30, 30, 0.4); backdrop-filter: blur(12px); border-radius: 15px; padding: 30px; border: 1px solid rgba(255,255,255,0.1); margin-top: 20px;'><h3 style='color: #4facfe;'>🎓 For Students</h3><ol style='color: #e2e8f0; line-height: 1.8; font-size: 16px;'><li><b>Browse:</b> View marketplace items freely.</li><li><b>Subscription:</b> Pay ₹1 fee only when you try to Contact a Seller or List an item.</li><li><b>Deals:</b> Select your preferred payment and delivery method while requesting the order. Seller accepts it. Upload UPI Screenshot directly in chat!</li></ol></div>", unsafe_allow_html=True)
 
     elif choice == "About Us":
         st.markdown("<h1 style='text-align:center;'>ℹ️ About Us</h1>", unsafe_allow_html=True)
@@ -604,12 +633,11 @@ else:
                         st.divider()
                         msgs = get_messages(st.session_state['user'], active_chat)
                         
-                        # --- ADVANCED CHAT RENDERER (TEXT + IMAGES) ---
                         for m in msgs:
                             align = "right" if m[0] == st.session_state['user'] else "left"
                             bg_color = 'linear-gradient(135deg, #a8edea 0%, #fed6e3 100%)' if align=='right' else '#f1f0f0'
                             
-                            # Check if message is a screenshot/image
+                            # Chat Renderer supports screenshots
                             if m[2].startswith('data:image'):
                                 st.markdown(f"<div style='text-align: {align}; padding: 12px; border-radius: 15px; background: {bg_color}; margin: 8px 0; display: inline-block; max-width: 80%;'><b>{m[0]}</b><br><img src='{m[2]}' style='max-width: 100%; border-radius: 10px; margin-top: 5px;'/></div>", unsafe_allow_html=True)
                             else:
@@ -624,14 +652,17 @@ else:
                     with c2:
                         st.write("### 🛍️ Deal Actions")
                         
-                        current_deal = get_single_data("SELECT * FROM deals WHERE ((seller=? AND buyer=?) OR (seller=? AND buyer=?)) AND status IN ('Proposed', 'Confirmed') ORDER BY id DESC LIMIT 1", (st.session_state['user'], active_chat, active_chat, st.session_state['user']))
+                        current_deal = get_single_data(
+                            "SELECT id, product_id, seller, buyer, delivery_mode, payment_mode, status FROM deals WHERE ((seller=? AND buyer=?) OR (seller=? AND buyer=?)) AND status IN ('Proposed', 'Confirmed') ORDER BY id DESC LIMIT 1", 
+                            (st.session_state['user'], active_chat, active_chat, st.session_state['user'])
+                        )
 
                         if current_deal:
-                            deal_id, p_id, d_seller, d_buyer, d_mode, d_status = current_deal[0], current_deal[1], current_deal[2], current_deal[3], current_deal[4], current_deal[5]
+                            deal_id, p_id, d_seller, d_buyer, d_mode, d_pay_mode, d_status = current_deal[0], current_deal[1], current_deal[2], current_deal[3], current_deal[4], current_deal[5], current_deal[6]
                             
                             if d_status == 'Proposed':
                                 if st.session_state['user'] == d_buyer:
-                                    st.info("⌛ Waiting for Seller to accept your order request.")
+                                    st.info(f"⌛ Waiting for Seller to accept your order. (Selected: {d_pay_mode})")
                                     if st.button("Cancel Request", use_container_width=True):
                                         run_query("UPDATE deals SET status='Cancelled' WHERE id=?", (deal_id,))
                                         send_message(st.session_state['user'], active_chat, "🚫 I cancelled my order request.")
@@ -639,7 +670,7 @@ else:
                                 elif st.session_state['user'] == d_seller:
                                     p_details = get_single_data("SELECT product_name, product_price FROM productstable WHERE id=?", (p_id,))
                                     p_name, p_price = p_details[0], p_details[1]
-                                    st.warning(f"🔔 {d_buyer} wants to buy '{p_name}' for ₹{p_price} via {d_mode}!")
+                                    st.warning(f"🔔 {d_buyer} wants to buy '{p_name}' for ₹{p_price} via {d_mode} and pay via **{d_pay_mode}**!")
                                     
                                     if st.button("Accept Order ✅", type="primary", use_container_width=True):
                                         confirm_deal(deal_id, p_id)
@@ -647,7 +678,7 @@ else:
                                         if d_mode == 'Delivery Agent':
                                             agents = get_all_delivery_agents()
                                             if agents: send_message(st.session_state['user'], agents[0][0], f"Delivery Request: Collect from {st.session_state['user']} -> Deliver to {d_buyer}.")
-                                        send_message(st.session_state['user'], active_chat, f"✅ I accepted your order for '{p_name}'. Let's proceed with payment!")
+                                        send_message(st.session_state['user'], active_chat, f"✅ I accepted your order for '{p_name}'. The item is marked as Sold!")
                                         time.sleep(2); st.rerun()
                                     if st.button("Reject Order ❌", use_container_width=True):
                                         run_query("UPDATE deals SET status='Cancelled' WHERE id=?", (deal_id,))
@@ -656,17 +687,10 @@ else:
                             elif d_status == 'Confirmed':
                                 st.success("✅ Order is Confirmed.")
                                 
-                                # --- BUYER PAYMENT OPTIONS (COD vs ONLINE) ---
                                 if st.session_state['user'] == d_buyer:
-                                    st.write("### 💳 Select Payment Method")
-                                    payment_mode = st.radio("How would you like to pay?", ["Cash on Delivery", "Online (UPI)"])
-                                    
-                                    if payment_mode == "Cash on Delivery":
-                                        if st.button("Confirm Cash on Delivery 🤝", type="primary"):
-                                            send_message(st.session_state['user'], active_chat, "🤝 I have opted for **Cash on Delivery**. I will pay cash when we meet/deliver.")
-                                            st.success("Preference sent to seller!")
-                                            
-                                    elif payment_mode == "Online (UPI)":
+                                    if d_pay_mode == "Cash on Delivery":
+                                        st.info("🤝 You have opted for Cash on Delivery. Please pay the seller during handover.")
+                                    elif d_pay_mode == "Online (UPI)":
                                         seller_upi = get_single_data("SELECT upi_id FROM userstable WHERE username=?", (d_seller,))[0]
                                         if seller_upi:
                                             p_price = get_single_data("SELECT product_price FROM productstable WHERE id=?", (p_id,))[0]
@@ -679,12 +703,10 @@ else:
                                                 proof_img = st.file_uploader("Upload Payment Screenshot", type=['png', 'jpg', 'jpeg'])
                                                 if st.form_submit_button("Send Payment Proof 🚀"):
                                                     if len(utr) >= 10 and proof_img:
-                                                        # Send Text Message
                                                         send_message(st.session_state['user'], d_seller, f"💸 I have transferred ₹{p_price}. UTR Number: **{utr}**")
-                                                        # Send Screenshot directly in Chat
                                                         b64_img = save_uploaded_file(proof_img)
                                                         send_message(st.session_state['user'], d_seller, b64_img)
-                                                        st.success("Payment proof and screenshot sent to seller's Inbox!")
+                                                        st.success("Payment proof sent to seller's Inbox!")
                                                         time.sleep(2); st.rerun()
                                                     else:
                                                         st.error("Please enter a valid UTR and upload the screenshot.")
@@ -710,9 +732,11 @@ else:
                                         prod_dict = {f"{p[1]} - ₹{p[2]} (ID:{p[0]})": p[0] for p in seller_prods}
                                         sel_prod = st.selectbox("Select Item", list(prod_dict.keys()))
                                         del_mode = st.radio("Delivery Option", ["Self Delivery", "Delivery Agent"])
+                                        pay_mode = st.radio("Payment Option", ["Cash on Delivery", "Online (UPI)"])
+                                        
                                         if st.form_submit_button("Send Order Request 🚀"):
-                                            propose_deal(prod_dict[sel_prod], active_chat, st.session_state['user'], del_mode)
-                                            send_message(st.session_state['user'], active_chat, f"I want to order '{sel_prod.split(' -')[0]}' via {del_mode}. Please ACCEPT it to finalize the deal.")
+                                            propose_deal(prod_dict[sel_prod], active_chat, st.session_state['user'], del_mode, pay_mode)
+                                            send_message(st.session_state['user'], active_chat, f"I want to order '{sel_prod.split(' -')[0]}' via {del_mode}. My payment method will be **{pay_mode}**. Please ACCEPT to finalize the deal.")
                                             st.success("Request sent!"); time.sleep(1); st.rerun()
 
                         st.divider()
