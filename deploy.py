@@ -53,9 +53,9 @@ def init_db():
     run_query('CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, username TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)')
     run_query('CREATE TABLE IF NOT EXISTS delivery_agent_emails(email TEXT PRIMARY KEY, registered INTEGER DEFAULT 0)')
     run_query('CREATE TABLE IF NOT EXISTS help_tickets(id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, issue TEXT, image_path TEXT, status TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)')
-    run_query('CREATE TABLE IF NOT EXISTS deals(id INTEGER PRIMARY KEY AUTOINCREMENT, product_id INTEGER, seller TEXT, buyer TEXT, delivery_mode TEXT, status TEXT)')
+    run_query('CREATE TABLE IF NOT EXISTS deals(id INTEGER PRIMARY KEY AUTOINCREMENT, product_id INTEGER, seller TEXT, buyer TEXT, delivery_mode TEXT, status TEXT, cancel_reason TEXT)')
     
-    # Migrations 
+    # Migrations for existing databases
     try: run_query('ALTER TABLE userstable ADD COLUMN is_subscribed INTEGER DEFAULT 0')
     except: pass
     try: run_query('ALTER TABLE help_tickets ADD COLUMN image_path TEXT')
@@ -102,10 +102,12 @@ def propose_deal(product_id, seller, buyer, delivery_mode):
 
 def confirm_deal(deal_id, product_id):
     run_query("UPDATE deals SET status='Confirmed' WHERE id=?", (deal_id,))
+    # Seller ne accept kiya, isliye item marketplace se hata do (Sold mark kardo)
     run_query("UPDATE productstable SET status='Sold' WHERE id=?", (product_id,))
 
 def cancel_deal(deal_id, product_id, reason):
     run_query("UPDATE deals SET status='Cancelled', cancel_reason=? WHERE id=?", (reason, deal_id))
+    # Cancel hua, isliye item wapas marketplace mein live (approved) kardo
     run_query("UPDATE productstable SET status='approved' WHERE id=?", (product_id,))
 
 def get_all_delivery_agents():
@@ -378,7 +380,7 @@ if not st.session_state['user']:
 
     elif choice == "How to Use":
         st.markdown("<h1 style='text-align:center;'>📖 How to Use Campus OLX</h1>", unsafe_allow_html=True)
-        st.markdown("<div style='background: rgba(30, 30, 30, 0.4); backdrop-filter: blur(12px); border-radius: 15px; padding: 30px; border: 1px solid rgba(255,255,255,0.1); margin-top: 20px;'><h3 style='color: #4facfe;'>🎓 For Students</h3><ol style='color: #e2e8f0; line-height: 1.8; font-size: 16px;'><li><b>Browse:</b> View marketplace items freely.</li><li><b>Subscription:</b> Pay ₹1 fee only when you try to Contact a Seller or List an item.</li><li><b>Buy & Sell:</b> Chat securely with built-in filters.</li><li><b>Deals:</b> Both seller and buyer must confirm an order. Orders can be cancelled with a reason, restoring the item to the marketplace.</li></ol></div>", unsafe_allow_html=True)
+        st.markdown("<div style='background: rgba(30, 30, 30, 0.4); backdrop-filter: blur(12px); border-radius: 15px; padding: 30px; border: 1px solid rgba(255,255,255,0.1); margin-top: 20px;'><h3 style='color: #4facfe;'>🎓 For Students</h3><ol style='color: #e2e8f0; line-height: 1.8; font-size: 16px;'><li><b>Browse:</b> View marketplace items freely.</li><li><b>Subscription:</b> Pay ₹1 fee only when you try to Contact a Seller or List an item.</li><li><b>Deals:</b> Buyer confirms an order with a delivery option, Seller accepts it, and the item gets removed from the marketplace. If cancelled with a reason, it returns to the marketplace.</li></ol></div>", unsafe_allow_html=True)
 
     elif choice == "About Us":
         st.markdown("<h1 style='text-align:center;'>ℹ️ About Us</h1>", unsafe_allow_html=True)
@@ -489,6 +491,8 @@ else:
                     
                     with c2:
                         st.write("### 🛍️ Deal Actions")
+                        
+                        # Fetch the most recent deal between these two users
                         current_deal = get_single_data(
                             "SELECT * FROM deals WHERE ((seller=? AND buyer=?) OR (seller=? AND buyer=?)) AND status IN ('Proposed', 'Confirmed') ORDER BY id DESC LIMIT 1", 
                             (st.session_state['user'], active_chat, active_chat, st.session_state['user'])
@@ -498,26 +502,31 @@ else:
                             deal_id, p_id, d_seller, d_buyer, d_mode, d_status = current_deal[0], current_deal[1], current_deal[2], current_deal[3], current_deal[4], current_deal[5]
                             
                             if d_status == 'Proposed':
-                                if st.session_state['user'] == d_seller:
-                                    st.info("⌛ You have proposed a deal. Waiting for buyer to confirm.")
-                                    if st.button("Cancel Proposal"):
+                                if st.session_state['user'] == d_buyer:
+                                    # BUYER requested the deal, waiting for seller
+                                    st.info("⌛ Waiting for Seller to accept your order request.")
+                                    if st.button("Cancel Request", use_container_width=True):
                                         run_query("UPDATE deals SET status='Cancelled' WHERE id=?", (deal_id,))
-                                        send_message(st.session_state['user'], active_chat, "🚫 I have withdrawn my deal proposal.")
+                                        send_message(st.session_state['user'], active_chat, "🚫 I have cancelled my order request.")
                                         st.rerun()
-                                else:
-                                    st.warning(f"🔔 {active_chat} has proposed a deal!")
-                                    if st.button("Accept & Confirm Order ✅", type="primary", use_container_width=True):
+                                elif st.session_state['user'] == d_seller:
+                                    # SELLER must accept or reject
+                                    p_name = get_single_data("SELECT product_name FROM productstable WHERE id=?", (p_id,))[0]
+                                    st.warning(f"🔔 {d_buyer} wants to confirm the order for '{p_name}' via {d_mode}!")
+                                    
+                                    if st.button("Accept Order ✅", type="primary", use_container_width=True):
                                         confirm_deal(deal_id, p_id)
-                                        st.success("Deal Confirmed! Item removed from marketplace.")
+                                        st.success("Order Accepted! Item removed from marketplace.")
                                         if d_mode == 'Delivery Agent':
                                             agents = get_all_delivery_agents()
                                             if agents:
-                                                send_message(st.session_state['user'], agents[0][0], f"New Delivery Request: Collect item from {active_chat} and deliver to {st.session_state['user']}.")
-                                        send_message(st.session_state['user'], active_chat, "✅ I have accepted and confirmed the deal. The item has been marked as Sold!")
+                                                send_message(st.session_state['user'], agents[0][0], f"New Delivery Request: Collect item from {st.session_state['user']} and deliver to {d_buyer}.")
+                                        send_message(st.session_state['user'], active_chat, f"✅ I have ACCEPTED your order for '{p_name}'. The item is marked as Sold!")
                                         time.sleep(2); st.rerun()
-                                    if st.button("Reject Proposal ❌", use_container_width=True):
+                                        
+                                    if st.button("Reject Order ❌", use_container_width=True):
                                         run_query("UPDATE deals SET status='Cancelled' WHERE id=?", (deal_id,))
-                                        send_message(st.session_state['user'], active_chat, "❌ I have rejected the deal proposal.")
+                                        send_message(st.session_state['user'], active_chat, "❌ I have rejected the order request.")
                                         st.rerun()
 
                             elif d_status == 'Confirmed':
@@ -534,17 +543,23 @@ else:
                                             else:
                                                 st.error("Please provide a reason to cancel the order.")
                         else:
-                            active_prods = get_data("SELECT id, product_name FROM productstable WHERE seller_name=? AND status='approved'", (st.session_state['user'],))
-                            if active_prods:
-                                with st.expander("🤝 Propose a Deal (As Seller)"):
-                                    with st.form("propose_deal_form"):
-                                        prod_dict = {f"{p[1]} (ID:{p[0]})": p[0] for p in active_prods}
-                                        sel_prod = st.selectbox("Select Item to Sell", list(prod_dict.keys()))
-                                        del_mode = st.radio("Delivery Type", ["Self Delivery", "Delivery Agent"])
-                                        if st.form_submit_button("Send Proposal"):
-                                            propose_deal(prod_dict[sel_prod], st.session_state['user'], active_chat, del_mode)
-                                            send_message(st.session_state['user'], active_chat, f"I have proposed a deal for '{sel_prod.split(' (')[0]}' via {del_mode}. Please click 'Accept' in the Deal Actions to confirm.")
-                                            st.success("Proposal sent!"); time.sleep(1); st.rerun()
+                            # NO ACTIVE DEAL. Allow BUYER to propose/confirm an order.
+                            # Check if active_chat is selling anything 'approved'
+                            seller_prods = get_data("SELECT id, product_name FROM productstable WHERE seller_name=? AND status='approved'", (active_chat,))
+                            
+                            if seller_prods:
+                                with st.expander("🛍️ Request to Buy Item"):
+                                    with st.form("buyer_confirm_form"):
+                                        prod_dict = {f"{p[1]} (ID:{p[0]})": p[0] for p in seller_prods}
+                                        sel_prod = st.selectbox("Select Item to Buy", list(prod_dict.keys()))
+                                        del_mode = st.radio("Delivery Option", ["Self Delivery", "Delivery Agent"])
+                                        
+                                        if st.form_submit_button("Send Order Request 🚀"):
+                                            propose_deal(prod_dict[sel_prod], active_chat, st.session_state['user'], del_mode)
+                                            send_message(st.session_state['user'], active_chat, f"I want to confirm my order for '{sel_prod.split(' (')[0]}' via {del_mode}. Please ACCEPT it to finalize the deal.")
+                                            st.success("Order request sent to seller!"); time.sleep(1); st.rerun()
+                            else:
+                                st.info("No active products available to buy from this user.")
 
                         st.divider()
                         st.write("### ⚙️ User Actions")
