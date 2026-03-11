@@ -17,7 +17,7 @@ from streamlit_option_menu import option_menu
 # --- CONFIGURATION (User must fill this) ---
 SENDER_EMAIL = "your mail"  
 SENDER_PASSWORD = "two step mail verification password"  
-ADMIN_UPI_ID = "ganesh@ybl"  # YAHAN APNI ASLI UPI ID DAALNA (For Subscription Payments)
+ADMIN_UPI_ID = "ganesh@ybl"  # YAHAN APNI ASLI UPI ID DAALNA (For Subscription)
 
 # ----------------------------------------------------
 # 1. DATABASE SETUP (SQLITE 3)
@@ -57,7 +57,7 @@ def init_db():
     run_query('CREATE TABLE IF NOT EXISTS help_tickets(id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, issue TEXT, image_path TEXT, status TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)')
     run_query('CREATE TABLE IF NOT EXISTS deals(id INTEGER PRIMARY KEY AUTOINCREMENT, product_id INTEGER, seller TEXT, buyer TEXT, delivery_mode TEXT, status TEXT, cancel_reason TEXT)')
     
-    # Migrations for existing databases
+    # Migrations
     try: run_query('ALTER TABLE userstable ADD COLUMN is_subscribed INTEGER DEFAULT 0')
     except: pass
     try: run_query('ALTER TABLE userstable ADD COLUMN upi_id TEXT DEFAULT ""')
@@ -78,11 +78,19 @@ def is_username_taken(username):
     res = get_single_data("SELECT username FROM userstable WHERE LOWER(username)=LOWER(?)", (username.strip(),))
     return res is not None
 
+def is_email_taken(email):
+    if not email: return False
+    res = get_single_data("SELECT email FROM userstable WHERE LOWER(email)=LOWER(?)", (email.strip(),))
+    return res is not None
+
 def login_user(username, password):
     return get_data('SELECT * FROM userstable WHERE username=? AND password=?', (username.strip(), password))
 
 def get_user_details(username):
     return get_single_data('SELECT * FROM userstable WHERE username=?', (username,))
+
+def update_password(username, new_password):
+    run_query('UPDATE userstable SET password=? WHERE username=?', (make_hashes(new_password), username))
 
 def add_userdata(username, fullname, password, course, year, id_card_path, email, status='pending'):
     run_query('INSERT INTO userstable(username,fullname,password,course,year,id_card_path,status,email,is_subscribed, upi_id) VALUES (?,?,?,?,?,?,?,?,0,"")', 
@@ -92,7 +100,6 @@ def add_product(seller_name, name, cat, price, desc, img_paths, p_type, status='
     run_query('INSERT INTO productstable(seller_name, product_name, product_cat, product_price, product_desc, product_img, type, status) VALUES (?,?,?,?,?,?,?,?)', 
               (seller_name, name, cat, price, desc, img_paths, p_type, status))
 
-# --- Deals & Cancellation Logic ---
 def propose_deal(product_id, seller, buyer, delivery_mode):
     run_query("INSERT INTO deals(product_id, seller, buyer, delivery_mode, status) VALUES (?,?,?,?, 'Proposed')", (product_id, seller, buyer, delivery_mode))
 
@@ -107,8 +114,15 @@ def cancel_deal(deal_id, product_id, reason):
 def get_all_delivery_agents():
     return get_data("SELECT * FROM userstable WHERE status='delivery_agent'")
 
+def add_delivery_agent_email(email):
+    try: run_query("INSERT INTO delivery_agent_emails(email) VALUES (?)", (email.strip(),))
+    except: pass
+
 def check_delivery_agent_email(email):
     return get_single_data("SELECT registered FROM delivery_agent_emails WHERE email=?", (email.strip(),))
+
+def register_delivery_agent_email(email):
+    run_query("UPDATE delivery_agent_emails SET registered=1 WHERE email=?", (email.strip(),))
 
 def subscribe_user(username):
     run_query("UPDATE userstable SET is_subscribed=1 WHERE username=?", (username,))
@@ -140,6 +154,21 @@ def delete_session(token):
 def generate_otp():
     return ''.join(random.choices(string.digits, k=6))
 
+def send_otp_email(receiver_email, otp, subject="Campus OLX - OTP"):
+    msg = EmailMessage()
+    msg.set_content(f"Your OTP is: {otp}\n\nDo not share this with anyone.")
+    msg['Subject'] = subject
+    msg['From'] = SENDER_EMAIL
+    msg['To'] = receiver_email
+    context = ssl.create_default_context()
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
+            server.login(SENDER_EMAIL, SENDER_PASSWORD)
+            server.send_message(msg)
+        return True, "✅ OTP Sent Successfully! Check your Inbox."
+    except Exception as e:
+        return False, f"❌ Failed to send email: {e}"
+
 # --- CHAT PROFANITY FILTER ---
 BANNED_WORDS = ['love', 'ishq', 'ishqbaazi', 'abuse', 'stupid', 'idiot', 'pagal', 'gadha', 'kamina', 'sale']
 def filter_chat(msg):
@@ -164,7 +193,11 @@ def render_image(img_string, **kwargs):
         st.write("📷 No Image")
 
 def send_message(sender, receiver, msg):
-    clean_msg = filter_chat(msg)
+    # Do not filter base64 images
+    if msg.startswith('data:image'):
+        clean_msg = msg
+    else:
+        clean_msg = filter_chat(msg)
     run_query('INSERT INTO messages(sender, receiver, message) VALUES (?,?,?)', (sender, receiver, clean_msg))
 
 def get_messages(user1, user2):
@@ -178,7 +211,7 @@ def get_all_chat_partners(user):
     return list(set([x[0] for x in sent] + [x[0] for x in received]))
 
 # ----------------------------------------------------
-# 2. APP INITIALIZATION & UI STYLES
+# 2. APP INITIALIZATION & ADVANCED UI STYLES
 # ----------------------------------------------------
 st.set_page_config(page_title="Campus OLX", page_icon="🎓", layout="wide")
 init_db()
@@ -195,32 +228,51 @@ st.markdown("""
 
     div[data-testid="stForm"], div[data-testid="stContainer"], section[data-testid="stSidebar"] {
         background: rgba(30, 30, 30, 0.4) !important; backdrop-filter: blur(12px);
-        border-radius: 15px; border: 1px solid rgba(255, 255, 255, 0.1); padding: 20px;
+        border-radius: 15px; box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.1); padding: 20px;
     }
     
-    .stMarkdown p, label[data-testid="stWidgetLabel"] p, .stCheckbox p, .stRadio p {
+    .stMarkdown p, label[data-testid="stWidgetLabel"] p, .stCheckbox p, .stRadio p, div[data-testid="stMarkdownContainer"] p {
         color: #e2e8f0 !important; font-weight: 500;
     }
+
+    div[data-testid="stExpander"] details summary p { color: #ffffff !important; font-weight: 600 !important; font-size: 1.1rem; }
     
     h1, h2, h3, h4 { 
         background: -webkit-linear-gradient(45deg, #4facfe, #00f2fe);
         -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        font-weight: 700 !important; text-shadow: none !important; padding-bottom: 5px;
     }
 
     .stTextInput>div>div>input, .stSelectbox>div>div>select, .stTextArea>div>div>textarea {
-        border-radius: 10px; background-color: rgba(255, 255, 255, 0.9) !important; color: #1a1a1a !important; 
+        border-radius: 10px; border: 1px solid rgba(255,255,255,0.2);
+        background-color: rgba(255, 255, 255, 0.9) !important; color: #1a1a1a !important; 
+    }
+    
+    .stTextInput>div>div>input:focus, .stSelectbox>div>div>select:focus, .stTextArea>div>div>textarea:focus {
+        border-color: #4facfe; box-shadow: 0 0 0 3px rgba(79, 172, 254, 0.3);
     }
 
     .product-card {
         background: rgba(255, 255, 255, 0.1); padding: 15px; border-radius: 15px; text-align: center;
         border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(5px); transition: all 0.3s ease; height: 100%;
     }
-    .product-card p, .product-card h3 { color: #ffffff !important; }
+    .product-card p, .product-card h3, .product-card span, .product-card div { color: #ffffff !important; }
     .product-card h2 { -webkit-text-fill-color: #00E676 !important; }
+    .product-card:hover { transform: translateY(-5px); border-color: #4facfe; box-shadow: 0 10px 20px rgba(0,0,0,0.4); }
 
-    .stButton > button {
+    .stButton > button, div[data-testid="stFormSubmitButton"] > button {
         background: linear-gradient(45deg, #4facfe 0%, #00f2fe 100%) !important; border: none !important;
-        border-radius: 30px !important; color: #121212 !important; font-weight: 700 !important;
+        border-radius: 30px !important; padding: 10px 20px !important; transition: all 0.3s ease !important;
+        box-shadow: 0 4px 15px rgba(0, 242, 254, 0.3) !important;
+    }
+    
+    .stButton > button p, div[data-testid="stFormSubmitButton"] > button p, .stButton > button *, div[data-testid="stFormSubmitButton"] > button * {
+        color: #121212 !important; font-weight: 700 !important; font-size: 16px !important;
+    }
+
+    .stButton > button:hover, div[data-testid="stFormSubmitButton"] > button:hover {
+        transform: translateY(-2px) !important; box-shadow: 0 6px 20px rgba(0, 242, 254, 0.6) !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -228,6 +280,9 @@ st.markdown("""
 # Session States
 if 'user' not in st.session_state: st.session_state['user'] = None
 if 'role' not in st.session_state: st.session_state['role'] = None
+if 'signup_step' not in st.session_state: st.session_state.signup_step = 1
+if 'signup_data' not in st.session_state: st.session_state.signup_data = {}
+if 'forgot_step' not in st.session_state: st.session_state.forgot_step = 1
 if 'show_payment_wall' not in st.session_state: st.session_state.show_payment_wall = False
 
 if not st.session_state['user']:
@@ -252,8 +307,8 @@ with st.sidebar:
         role = st.session_state['role']
         
         if role == 'admin':
-            menu = ["Dashboard", "Users", "Products", "Issues"]
-            icons = ['speedometer2', 'people', 'box-seam', 'check-square']
+            menu = ["Dashboard", "Users", "Products", "Delivery Agents", "Issues"]
+            icons = ['speedometer2', 'people', 'box-seam', 'person-badge', 'check-square']
         elif role == 'delivery_agent':
             menu = ["Inbox", "Help", "Profile"]
             icons = ['chat-dots', 'question-circle', 'person']
@@ -271,65 +326,187 @@ with st.sidebar:
             st.session_state.show_payment_wall = False
             st.rerun()
     else:
-        choice = option_menu("Welcome", ["Login", "Student Sign Up", "Agent Login", "How to Use"], default_index=0)
+        choice = option_menu("Welcome", 
+                             ["Login", "Student Sign Up", "Delivery Agent Auth", "How to Use", "About Us"], 
+                             icons=['box-arrow-in-right', 'person-plus', 'truck', 'book', 'info-circle'], 
+                             default_index=0)
 
 if not st.session_state['user']:
     if choice == "Login":
-        st.markdown("<h1>🔑 Welcome Back</h1>", unsafe_allow_html=True)
-        with st.form("login_form"):
-            username = st.text_input("Roll Number / Admin ID").strip()
-            password = st.text_input("Password", type='password')
-            if st.form_submit_button("Login Securely"):
-                result = login_user(username, make_hashes(password))
-                if result:
-                    u_data = result[0]
-                    if u_data[6] in ['admin', 'approved', 'delivery_agent']:
-                        st.session_state['user'] = username
-                        st.session_state['role'] = 'admin' if u_data[6] == 'admin' else ('delivery_agent' if u_data[6] == 'delivery_agent' else 'student')
-                        st.query_params['token'] = create_session(username)
+        log_type = st.radio("Select Option", ["Login", "Forgot Password"], horizontal=True)
+        if log_type == "Login":
+            st.markdown("<h1>🔑 Welcome Back</h1>", unsafe_allow_html=True)
+            with st.form("login_form"):
+                username = st.text_input("Roll Number / Admin ID").strip()
+                password = st.text_input("Password", type='password')
+                if st.form_submit_button("Login Securely"):
+                    result = login_user(username, make_hashes(password))
+                    if result:
+                        u_data = result[0]
+                        if u_data[6] in ['admin', 'approved', 'delivery_agent']:
+                            st.session_state['user'] = username
+                            st.session_state['role'] = 'admin' if u_data[6] == 'admin' else ('delivery_agent' if u_data[6] == 'delivery_agent' else 'student')
+                            st.query_params['token'] = create_session(username)
+                            st.rerun()
+                        else: st.warning(f"Account Status: {u_data[6]}")
+                    else: st.error("❌ Invalid Credentials")
+                    
+        else: 
+            st.markdown("<h1>🔓 Forgot Password</h1>", unsafe_allow_html=True)
+            if st.session_state.forgot_step == 1:
+                f_roll = st.text_input("Enter your Roll Number").strip()
+                if st.button("Send OTP to Registered Email"):
+                    u_data = get_user_details(f_roll)
+                    if u_data and u_data[7]:
+                        st.session_state.forgot_email = u_data[7]
+                        st.session_state.forgot_user = f_roll
+                        st.session_state.forgot_otp = generate_otp()
+                        with st.spinner("Sending OTP..."):
+                            send_otp_email(st.session_state.forgot_email, st.session_state.forgot_otp, "Campus OLX - Password Reset")
+                        st.session_state.forgot_step = 2
                         st.rerun()
-                    else: st.warning(f"Account Status: {u_data[6]}")
-                else: st.error("❌ Invalid Credentials")
+                    else: st.error("Roll Number not found or no email associated.")
+                        
+            elif st.session_state.forgot_step == 2:
+                st.info(f"OTP sent to masked email: {st.session_state.forgot_email[:3]}***@***")
+                entered_otp = st.text_input("Enter OTP").strip()
+                if st.button("Verify OTP"):
+                    if entered_otp == st.session_state.forgot_otp:
+                        st.session_state.forgot_step = 3
+                        st.rerun()
+                    else: st.error("Invalid OTP")
+                if st.button("Cancel"): st.session_state.forgot_step = 1; st.rerun()
+                
+            elif st.session_state.forgot_step == 3:
+                new_pwd = st.text_input("Enter New Password", type='password')
+                new_pwd2 = st.text_input("Confirm New Password", type='password')
+                if st.button("Reset Password"):
+                    if len(new_pwd) < 8: st.error("Password must be at least 8 characters")
+                    elif new_pwd == new_pwd2:
+                        update_password(st.session_state.forgot_user, new_pwd)
+                        st.success("Password Updated Successfully! Please Login.")
+                        st.session_state.forgot_step = 1
+                        time.sleep(2)
+                        st.rerun()
+                    else: st.error("Passwords do not match")
 
     elif choice == "Student Sign Up":
         st.markdown("<h1 style='text-align:center;'>📝 Student Registration</h1>", unsafe_allow_html=True)
-        with st.form("signup_form"):
-            full_name = st.text_input("Full Name")
-            username = st.text_input("Roll Number")
-            email = st.text_input("Official Email")
-            password = st.text_input("Password", type='password')
-            id_front = st.file_uploader("Upload ID Card Photo", type=['jpg', 'png'])
-            if st.form_submit_button("Create Account"):
-                if is_username_taken(username): st.error("Roll Number already registered!")
-                elif id_front and username and email and password:
+        if st.session_state.signup_step == 1:
+            st.info("Step 1: College Identity")
+            c1, c2 = st.columns(2)
+            with c1:
+                full_name = st.text_input("Full Name").strip()
+                username = st.text_input("Roll Number").strip()
+                id_front = st.file_uploader("Upload ID Card Photo", type=['jpg', 'png'])
+            with c2:
+                course = st.selectbox("Branch", ["CSE", "ECE", "EEE", "Civil", "Mechanical", "Other"])
+                year = st.selectbox("Year", ["Diploma 1st Year", "Diploma 2nd Year", "Diploma 3rd Year", "B.Tech 1st Year", "B.Tech 2nd Year", "B.Tech 3rd Year", "B.Tech 4th Year"])
+            
+            if st.button("Proceed to Next Step ➡️"):
+                if not all([full_name, username, id_front]): st.error("Please fill all fields and upload ID.")
+                elif is_username_taken(username): st.error("❌ Roll Number already registered!")
+                else:
                     path = save_uploaded_file(id_front)
-                    add_userdata(username, full_name, make_hashes(password), "N/A", "N/A", path, email, 'pending')
-                    st.success("✅ Account created! Waiting for Admin Approval.")
-                else: st.error("Fill all fields")
+                    st.session_state.signup_data = { "username": username, "fullname": full_name, "course": course, "year": year, "id_card_path": path }
+                    st.session_state.signup_step = 2
+                    st.rerun()
 
-    elif choice == "Agent Login":
-        st.markdown("<h1>🚚 Delivery Agent Login</h1>", unsafe_allow_html=True)
-        username = st.text_input("Agent Username/ID").strip()
-        password = st.text_input("Password", type='password')
-        if st.button("Login"):
-            res = login_user(username, make_hashes(password))
-            if res and res[0][6] == 'delivery_agent':
-                st.session_state['user'] = username; st.session_state['role'] = 'delivery_agent'
-                st.query_params['token'] = create_session(username)
-                st.rerun()
-            else: st.error("❌ Invalid Credentials")
+        elif st.session_state.signup_step == 2:
+            st.info("Step 2: Security & Verification")
+            email = st.text_input("College or Personal Email").strip()
+            
+            col1, col2 = st.columns([1,1])
+            with col1:
+                if st.button("Send Verification OTP"):
+                    if not re.match(r"[^@]+@[^@]+\.[^@]+", email): st.error("Invalid Email")
+                    elif is_email_taken(email): st.error("❌ Email already in use!")
+                    else:
+                        st.session_state.signup_data['email'] = email
+                        st.session_state.signup_otp = generate_otp()
+                        with st.spinner("Sending OTP securely..."):
+                            send_otp_email(email, st.session_state.signup_otp)
+                        st.success("OTP Sent!")
+            with col2:
+                otp_input = st.text_input("Enter OTP sent to email").strip()
+            
+            password = st.text_input("Setup Password", type='password')
+            
+            c3, c4 = st.columns(2)
+            if c3.button("⬅️ Go Back"): st.session_state.signup_step = 1; st.rerun()
+            if c4.button("Verify & Continue ➡️"):
+                if 'signup_otp' not in st.session_state or otp_input != st.session_state.signup_otp: st.error("❌ Incorrect or missing OTP")
+                elif len(password) < 8: st.error("Password must be 8+ chars")
+                else:
+                    st.session_state.signup_data['password'] = make_hashes(password)
+                    st.session_state.signup_step = 3
+                    st.rerun()
+
+        elif st.session_state.signup_step == 3:
+            st.info("Step 3: Terms & Conditions")
+            st.markdown("1. **Campus Use Only**: Strictly for students.\n2. **No Illegal Items**: Selling prohibited items is an offense.\n3. **Behave Professionally**: Spamming will result in ban.")
+            agree = st.checkbox("I agree to the Terms and Conditions")
+            c1, c2 = st.columns(2)
+            if c1.button("⬅️ Back"): st.session_state.signup_step = 2; st.rerun()
+            if c2.button("Create Account ✅", type="primary"):
+                if agree:
+                    d = st.session_state.signup_data
+                    add_userdata(d['username'], d['fullname'], d['password'], d['course'], d['year'], d['id_card_path'], d['email'], 'pending')
+                    st.balloons()
+                    st.success("✅ Account created! Waiting for Admin Approval.")
+                    st.session_state.signup_step = 1; st.session_state.signup_data = {}
+                    time.sleep(2); st.rerun()
+                else: st.error("You must agree to T&C.")
+
+    elif choice == "Delivery Agent Auth":
+        st.markdown("<h1>🚚 Delivery Agent Login/Signup</h1>", unsafe_allow_html=True)
+        log_type = st.radio("Select", ["Login", "Register"])
+        if log_type == "Login":
+            username = st.text_input("Agent Username/ID").strip()
+            password = st.text_input("Password", type='password')
+            if st.button("Login"):
+                res = login_user(username, make_hashes(password))
+                if res and res[0][6] == 'delivery_agent':
+                    st.session_state['user'] = username; st.session_state['role'] = 'delivery_agent'
+                    st.query_params['token'] = create_session(username)
+                    st.rerun()
+                else: st.error("❌ Invalid Credentials")
+        else:
+            email = st.text_input("Enter Authorized Email").strip()
+            if st.button("Check Eligibility"):
+                status = check_delivery_agent_email(email)
+                if status is None: st.error("❌ Email not authorized by Admin.")
+                elif status[0] == 1: st.error("❌ Already registered.")
+                else:
+                    st.success("✅ Authorized! Please setup profile.")
+                    st.session_state.da_verified = True; st.session_state.da_email = email
+            
+            if st.session_state.get('da_verified'):
+                with st.form("da_setup"):
+                    da_name = st.text_input("Full Name").strip()
+                    da_user = st.text_input("Choose Username").strip()
+                    da_pwd = st.text_input("Setup Password", type='password')
+                    if st.form_submit_button("Register Agent"):
+                        if is_username_taken(da_user): st.error("Username taken!")
+                        else:
+                            add_userdata(da_user, da_name, make_hashes(da_pwd), "N/A", "N/A", "N/A", st.session_state.da_email, 'delivery_agent')
+                            register_delivery_agent_email(st.session_state.da_email)
+                            st.success("Registered! Please Login."); st.session_state.da_verified = False
 
     elif choice == "How to Use":
-        st.markdown("<h1 style='text-align:center;'>📖 How to Use</h1>", unsafe_allow_html=True)
-        st.write("Campus OLX uses Real UPI payments via dynamic QR Codes for highly secure transactions without middlemen APIs.")
+        st.markdown("<h1 style='text-align:center;'>📖 How to Use Campus OLX</h1>", unsafe_allow_html=True)
+        st.markdown("<div style='background: rgba(30, 30, 30, 0.4); backdrop-filter: blur(12px); border-radius: 15px; padding: 30px; border: 1px solid rgba(255,255,255,0.1); margin-top: 20px;'><h3 style='color: #4facfe;'>🎓 For Students</h3><ol style='color: #e2e8f0; line-height: 1.8; font-size: 16px;'><li><b>Browse:</b> View marketplace items freely.</li><li><b>Subscription:</b> Pay ₹1 fee only when you try to Contact a Seller or List an item.</li><li><b>Deals:</b> Buyer confirms an order with a delivery option, Seller accepts it. Then Buyer can choose COD or Upload UPI Screenshot directly in chat!</li></ol></div>", unsafe_allow_html=True)
+
+    elif choice == "About Us":
+        st.markdown("<h1 style='text-align:center;'>ℹ️ About Us</h1>", unsafe_allow_html=True)
+        st.markdown("<div style='background: rgba(30, 30, 30, 0.4); backdrop-filter: blur(12px); border-radius: 15px; padding: 30px; border: 1px solid rgba(255,255,255,0.1); margin-top: 20px;'><h3 style='color: #4facfe;'>🌟 Our Vision</h3><p style='color: #e2e8f0; font-size: 16px; line-height: 1.6;'>A seamless, secure localized marketplace.</p><h3 style='color: #4facfe;'>👨‍💻 Developed By</h3><ul style='color: #e2e8f0; font-size: 16px; line-height: 1.8;'><li><b>Ganesh</b> <span style='color:#00f2fe;'>(Team Lead)</span></li><li><b>Sairam</b>, <b>Navyasri</b>, <b>Akshitha</b>, <b>Mrigank</b>, <b>Manish</b></li></ul></div>", unsafe_allow_html=True)
 
 else:
     u_details = get_user_details(st.session_state['user'])
     is_subscribed = u_details[8] if u_details else 0
-    my_upi = u_details[9] if (u_details and len(u_details) > 9) else ""
 
     if st.session_state['role'] == 'student':
-        # --- 1. REAL UPI PAYMENT WALL FOR SUBSCRIPTION ---
+        # --- THE SMART PAYMENT WALL INTERCEPTOR ---
         if st.session_state.get('show_payment_wall', False) and not is_subscribed:
             st.markdown("<h1>⭐ Premium Access Required</h1>", unsafe_allow_html=True)
             st.warning("Please pay ₹1 via UPI to activate Buy & Sell features.")
@@ -337,7 +514,6 @@ else:
             c1, c2 = st.columns([1, 1])
             with c1:
                 st.write("### 1. Scan & Pay ₹1")
-                # Generate Real UPI QR Code
                 upi_url = f"upi://pay?pa={ADMIN_UPI_ID}&pn=Campus+OLX+Premium&am=1.00&cu=INR"
                 qr_api = f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data={urllib.parse.quote(upi_url)}"
                 st.image(qr_api, width=250, caption=f"Pay ₹1 to {ADMIN_UPI_ID}")
@@ -358,17 +534,22 @@ else:
                 
                 if st.button("⬅️ Cancel & Go Back"):
                     st.session_state.show_payment_wall = False; st.rerun()
-
         else:
             if choice == "Marketplace":
                 st.markdown("<h1>🛒 Student Marketplace</h1>", unsafe_allow_html=True)
-                search = st.text_input("🔍 Search Item...")
+                c1, c2, c3 = st.columns(3)
+                search = c1.text_input("🔍 Search Item...")
+                cat_filter = c2.selectbox("Filter Category", ["All", "Books", "Electronics", "Stationery", "Other"])
+                sort_by = c3.selectbox("Sort By", ["Latest", "Price: Low to High", "Price: High to Low"])
                 st.divider()
                 
                 all_prods = get_data("SELECT * FROM productstable WHERE status='approved'")
                 if search: all_prods = [p for p in all_prods if search.lower() in p[2].lower()]
+                if cat_filter != "All": all_prods = [p for p in all_prods if p[3] == cat_filter]
+                if sort_by == "Price: Low to High": all_prods = sorted(all_prods, key=lambda x: float(x[4]))
+                elif sort_by == "Price: High to Low": all_prods = sorted(all_prods, key=lambda x: float(x[4]), reverse=True)
                     
-                if not all_prods: st.info("No items found.")
+                if not all_prods: st.info("No items found matching your criteria.")
                 cols = st.columns(4)
                 for i, p in enumerate(all_prods):
                     with cols[i%4]:
@@ -376,37 +557,39 @@ else:
                         first_image = p[6].split('|')[0] if p[6] else None
                         render_image(first_image, use_container_width=True)
                         st.markdown(f"<h3>{p[2]}</h3>", unsafe_allow_html=True)
-                        st.markdown(f"<h2 style='color:#00E676; margin:0;'>₹{p[4]}</h2>", unsafe_allow_html=True)
+                        st.markdown(f"<h2 style='color:#00E676; margin:0; -webkit-text-fill-color: #00E676;'>₹{p[4]}</h2>", unsafe_allow_html=True)
                         st.caption(f"Category: {p[3]} | Seller: {p[1]}")
                         
                         if p[1] != st.session_state['user']:
                             if st.button(f"Contact Seller", key=f"buy_{p[0]}", use_container_width=True):
                                 if not is_subscribed:
-                                    st.session_state.show_payment_wall = True; st.rerun()
+                                    st.session_state.show_payment_wall = True
+                                    st.rerun()
                                 else:
-                                    send_message(st.session_state['user'], p[1], f"Hi, I want to buy: **{p[2]}** (₹{p[4]}). Is it available?")
-                                    st.success("Message sent! Check Inbox.")
+                                    send_message(st.session_state['user'], p[1], f"Hi, I want to buy your item: **{p[2]}** (₹{p[4]}). Is it available?")
+                                    st.success("Message sent! Check your Inbox.")
                         st.markdown("</div><br>", unsafe_allow_html=True)
 
             elif choice == "Sell Item":
                 st.markdown("<h1>📦 Sell Your Item</h1>", unsafe_allow_html=True)
-                st.info("Upload multiple photos. Max price allowed is ₹500.")
+                st.info("Upload multiple photos. Max price allowed is ₹500. Admin will review before posting.")
                 with st.form("sell_form"):
                     name = st.text_input("Item Name")
                     cat = st.selectbox("Category", ["Books", "Electronics", "Stationery", "Other"])
                     price = st.number_input("Price (Max ₹500)", min_value=1, max_value=500, step=1)
                     desc = st.text_area("Item Details")
-                    imgs = st.file_uploader("Upload Photos", type=['jpg', 'png'], accept_multiple_files=True)
+                    imgs = st.file_uploader("Upload Photos (Multiple allowed)", type=['jpg', 'png'], accept_multiple_files=True)
                     
                     if st.form_submit_button("Submit for Approval 🚀"):
                         if not is_subscribed:
-                            st.session_state.show_payment_wall = True; st.rerun()
+                            st.session_state.show_payment_wall = True
+                            st.rerun()
                         elif name and imgs and price <= 500:
                             paths = [save_uploaded_file(img) for img in imgs]
                             path_str = "|".join(paths) 
                             add_product(st.session_state['user'], name, cat, price, desc, path_str, 'Sell', 'pending')
                             st.success("✅ Item submitted to Admin for approval!")
-                        else: st.error("Fill all fields correctly.")
+                        else: st.error("Please fill all fields, ensure price is <= ₹500, and upload at least 1 image.")
 
             elif choice == "Inbox":
                 st.markdown("<h1>💬 Inbox & Deals</h1>", unsafe_allow_html=True)
@@ -420,17 +603,27 @@ else:
                         active_chat = st.selectbox("Chatting with:", partners)
                         st.divider()
                         msgs = get_messages(st.session_state['user'], active_chat)
+                        
+                        # --- ADVANCED CHAT RENDERER (TEXT + IMAGES) ---
                         for m in msgs:
                             align = "right" if m[0] == st.session_state['user'] else "left"
                             bg_color = 'linear-gradient(135deg, #a8edea 0%, #fed6e3 100%)' if align=='right' else '#f1f0f0'
-                            st.markdown(f"<div style='text-align: {align}; padding: 12px 18px; border-radius: 20px; background: {bg_color}; color: #333; margin: 8px 0; display: inline-block; max-width: 80%;'><b>{m[0]}</b><br>{m[2]}</div>", unsafe_allow_html=True)
+                            
+                            # Check if message is a screenshot/image
+                            if m[2].startswith('data:image'):
+                                st.markdown(f"<div style='text-align: {align}; padding: 12px; border-radius: 15px; background: {bg_color}; margin: 8px 0; display: inline-block; max-width: 80%;'><b>{m[0]}</b><br><img src='{m[2]}' style='max-width: 100%; border-radius: 10px; margin-top: 5px;'/></div>", unsafe_allow_html=True)
+                            else:
+                                st.markdown(f"<div style='text-align: {align}; padding: 12px 18px; border-radius: 20px; background: {bg_color}; color: #333; margin: 8px 0; display: inline-block; max-width: 80%; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'><b>{m[0]}</b><br>{m[2]}</div>", unsafe_allow_html=True)
+                        
                         with st.form("send_msg", clear_on_submit=True):
-                            new_msg = st.text_input("Type message...")
-                            if st.form_submit_button("Send 🚀"):
-                                if new_msg: send_message(st.session_state['user'], active_chat, new_msg); st.rerun()
+                            new_msg = st.text_input("Type your message here... (Filtered securely)")
+                            if st.form_submit_button("Send Message 🚀"):
+                                if new_msg:
+                                    send_message(st.session_state['user'], active_chat, new_msg); st.rerun()
                     
                     with c2:
                         st.write("### 🛍️ Deal Actions")
+                        
                         current_deal = get_single_data("SELECT * FROM deals WHERE ((seller=? AND buyer=?) OR (seller=? AND buyer=?)) AND status IN ('Proposed', 'Confirmed') ORDER BY id DESC LIMIT 1", (st.session_state['user'], active_chat, active_chat, st.session_state['user']))
 
                         if current_deal:
@@ -463,36 +656,52 @@ else:
                             elif d_status == 'Confirmed':
                                 st.success("✅ Order is Confirmed.")
                                 
-                                # --- 2. REAL BUYER-SELLER PAYMENT ---
+                                # --- BUYER PAYMENT OPTIONS (COD vs ONLINE) ---
                                 if st.session_state['user'] == d_buyer:
-                                    st.write("### 💳 Pay Seller")
-                                    seller_upi = get_single_data("SELECT upi_id FROM userstable WHERE username=?", (d_seller,))[0]
-                                    if seller_upi:
-                                        p_price = get_single_data("SELECT product_price FROM productstable WHERE id=?", (p_id,))[0]
-                                        pay_url = f"upi://pay?pa={seller_upi}&pn={d_seller}&am={p_price}&cu=INR"
-                                        qr = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={urllib.parse.quote(pay_url)}"
-                                        st.image(qr, caption=f"Scan to Pay ₹{p_price} to {d_seller}")
-                                        
-                                        with st.form("buyer_payment_verify"):
-                                            utr = st.text_input("Enter 12-Digit UTR after payment")
-                                            if st.form_submit_button("Send Payment Proof"):
-                                                if len(utr) >= 10:
-                                                    send_message(st.session_state['user'], d_seller, f"💸 I have transferred ₹{p_price}. UTR Number: **{utr}**")
-                                                    st.success("Payment proof sent to seller!")
-                                                else: st.error("Invalid UTR")
-                                    else:
-                                        st.error(f"Seller ({d_seller}) has not updated their UPI ID in their profile.")
+                                    st.write("### 💳 Select Payment Method")
+                                    payment_mode = st.radio("How would you like to pay?", ["Cash on Delivery", "Online (UPI)"])
+                                    
+                                    if payment_mode == "Cash on Delivery":
+                                        if st.button("Confirm Cash on Delivery 🤝", type="primary"):
+                                            send_message(st.session_state['user'], active_chat, "🤝 I have opted for **Cash on Delivery**. I will pay cash when we meet/deliver.")
+                                            st.success("Preference sent to seller!")
+                                            
+                                    elif payment_mode == "Online (UPI)":
+                                        seller_upi = get_single_data("SELECT upi_id FROM userstable WHERE username=?", (d_seller,))[0]
+                                        if seller_upi:
+                                            p_price = get_single_data("SELECT product_price FROM productstable WHERE id=?", (p_id,))[0]
+                                            pay_url = f"upi://pay?pa={seller_upi}&pn={d_seller}&am={p_price}&cu=INR"
+                                            qr = f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={urllib.parse.quote(pay_url)}"
+                                            st.image(qr, caption=f"Scan to Pay ₹{p_price} to {d_seller}")
+                                            
+                                            with st.form("buyer_payment_verify"):
+                                                utr = st.text_input("Enter 12-Digit UTR after payment")
+                                                proof_img = st.file_uploader("Upload Payment Screenshot", type=['png', 'jpg', 'jpeg'])
+                                                if st.form_submit_button("Send Payment Proof 🚀"):
+                                                    if len(utr) >= 10 and proof_img:
+                                                        # Send Text Message
+                                                        send_message(st.session_state['user'], d_seller, f"💸 I have transferred ₹{p_price}. UTR Number: **{utr}**")
+                                                        # Send Screenshot directly in Chat
+                                                        b64_img = save_uploaded_file(proof_img)
+                                                        send_message(st.session_state['user'], d_seller, b64_img)
+                                                        st.success("Payment proof and screenshot sent to seller's Inbox!")
+                                                        time.sleep(2); st.rerun()
+                                                    else:
+                                                        st.error("Please enter a valid UTR and upload the screenshot.")
+                                        else:
+                                            st.error(f"Seller ({d_seller}) has not updated their UPI ID in their profile.")
 
                                 with st.expander("❌ Cancel this Order"):
                                     with st.form("cancel_order_form"):
-                                        cancel_reason = st.text_input("Reason for cancellation")
+                                        cancel_reason = st.text_input("Reason for cancellation (Required)")
                                         if st.form_submit_button("Submit Cancellation"):
                                             if cancel_reason:
                                                 cancel_deal(deal_id, p_id, cancel_reason)
-                                                send_message(st.session_state['user'], active_chat, f"❌ ORDER CANCELLED. Reason: {cancel_reason}")
-                                                st.success("Order cancelled. Item is live again!")
+                                                send_message(st.session_state['user'], active_chat, f"❌ ORDER CANCELLED.\nReason: {cancel_reason}")
+                                                st.success("Order cancelled. Item is back live on the marketplace!")
                                                 time.sleep(2); st.rerun()
-                                            else: st.error("Reason required.")
+                                            else:
+                                                st.error("Please provide a reason to cancel the order.")
                         else:
                             seller_prods = get_data("SELECT id, product_name, product_price FROM productstable WHERE seller_name=? AND status='approved'", (active_chat,))
                             if seller_prods:
@@ -507,12 +716,44 @@ else:
                                             st.success("Request sent!"); time.sleep(1); st.rerun()
 
                         st.divider()
+                        st.write("### ⚙️ User Actions")
+                        if st.button("🚫 Block User", use_container_width=True): st.error(f"User {active_chat} Blocked!")
+                        
                         with st.expander("⚠️ Report User"):
                             with st.form("report_form"):
-                                rep_reason = st.text_area("Reason")
-                                if st.form_submit_button("Report"):
-                                    create_help_ticket(st.session_state['user'], f"Reported {active_chat}: {rep_reason}")
-                                    st.success("Reported to Admin.")
+                                rep_reason = st.text_area("Reason for reporting")
+                                rep_img = st.file_uploader("Upload Evidence (Screenshot)", type=['png', 'jpg', 'jpeg'])
+                                if st.form_submit_button("Submit Report"):
+                                    if rep_reason:
+                                        img_path = save_uploaded_file(rep_img) if rep_img else None
+                                        create_help_ticket(st.session_state['user'], f"Reported against {active_chat}: {rep_reason}", img_path)
+                                        st.success("Report successfully sent to Admin for review.")
+                                    else:
+                                        st.error("Please enter a reason to report.")
+
+            elif choice == "Help":
+                st.markdown("<h1>🆘 Help & Support</h1>", unsafe_allow_html=True)
+                with st.form("report_issue", clear_on_submit=True):
+                    issue_text = st.text_area("Describe your issue in detail...")
+                    screenshot = st.file_uploader("Attach Screenshot (Optional)", type=['png', 'jpg', 'jpeg'])
+                    if st.form_submit_button("Submit Issue Ticket"):
+                        if issue_text:
+                            img_path = save_uploaded_file(screenshot) if screenshot else None
+                            create_help_ticket(st.session_state['user'], issue_text, img_path)
+                            st.success("Ticket Created! Admin will review it shortly.")
+                            time.sleep(1); st.rerun()
+                        else: st.error("Please enter issue details.")
+                st.divider()
+                st.write("### Your Reported Issues")
+                my_tickets = get_my_tickets(st.session_state['user'])
+                if my_tickets:
+                    for t in my_tickets:
+                        status_color = "#ff4444" if t[4] == "pending" else "#00C851"
+                        with st.expander(f"Ticket #{t[0]} - {t[5]} (Status: {t[4].upper()})", expanded=False):
+                            st.markdown(f"**Issue Details:** {t[2]}")
+                            if t[3]: render_image(t[3], caption="Your Attachment", width=300)
+                            st.markdown(f"**Current Status:** <span style='color:{status_color}; font-weight:bold;'>{t[4].upper()}</span>", unsafe_allow_html=True)
+                else: st.info("No issues reported.")
 
             elif choice == "Profile":
                 u = get_user_details(st.session_state['user'])
@@ -526,6 +767,7 @@ else:
                         <hr>
                         <p><b>Roll Number:</b> {u[0]}</p>
                         <p><b>Branch & Year:</b> {u[3]} - {u[4]}</p>
+                        <p><b>Registered Email:</b> {u[7]}</p>
                         <p><b>Pass Status:</b> {'Active Premium ⭐' if is_subscribed else 'Inactive ❌'}</p>
                     </div>
                     """, unsafe_allow_html=True)
@@ -533,21 +775,12 @@ else:
                     st.markdown("### 🏦 Payment Settings")
                     st.info("Set your UPI ID so buyers can pay you directly via QR Code when an order is confirmed.")
                     with st.form("update_upi_form"):
-                        # Handling indexing safely for UPI ID
                         current_upi = u[9] if len(u) > 9 else ""
                         new_upi = st.text_input("Your UPI ID (e.g. 9876543210@ybl)", value=current_upi)
                         if st.form_submit_button("Save UPI ID"):
                             run_query("UPDATE userstable SET upi_id=? WHERE username=?", (new_upi.strip(), st.session_state['user']))
                             st.success("UPI ID Updated successfully!")
                             time.sleep(1); st.rerun()
-
-            elif choice == "Help":
-                st.markdown("<h1>🆘 Help & Support</h1>", unsafe_allow_html=True)
-                with st.form("report_issue", clear_on_submit=True):
-                    issue_text = st.text_area("Describe your issue...")
-                    if st.form_submit_button("Submit Ticket"):
-                        create_help_ticket(st.session_state['user'], issue_text)
-                        st.success("Ticket Created!"); time.sleep(1); st.rerun()
 
     elif st.session_state['role'] == 'delivery_agent':
         if choice == "Inbox":
@@ -563,7 +796,12 @@ else:
                     for m in msgs:
                         align = "right" if m[0] == st.session_state['user'] else "left"
                         bg_color = 'linear-gradient(120deg, #e0c3fc 0%, #8ec5fc 100%)' if align=='right' else '#f1f0f0'
-                        st.markdown(f"<div style='text-align: {align}; padding: 12px 18px; border-radius: 20px; background: {bg_color}; color: #333; margin: 8px 0; display: inline-block; max-width: 80%;'><b>{m[0]}</b><br>{m[2]}</div>", unsafe_allow_html=True)
+                        
+                        if m[2].startswith('data:image'):
+                            st.markdown(f"<div style='text-align: {align}; padding: 12px; border-radius: 15px; background: {bg_color}; margin: 8px 0; display: inline-block; max-width: 80%;'><b>{m[0]}</b><br><img src='{m[2]}' style='max-width: 100%; border-radius: 10px; margin-top: 5px;'/></div>", unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"<div style='text-align: {align}; padding: 12px 18px; border-radius: 20px; background: {bg_color}; color: #333; margin: 8px 0; display: inline-block; max-width: 80%; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'><b>{m[0]}</b><br>{m[2]}</div>", unsafe_allow_html=True)
+                    
                     with st.form("da_send_msg", clear_on_submit=True):
                         new_msg = st.text_input("Type a reply...")
                         if st.form_submit_button("Send Reply"):
@@ -573,6 +811,28 @@ else:
                 if st.button("Mark Delivery Complete ✅", type="primary", use_container_width=True):
                     send_message(st.session_state['user'], active_chat, "✅ Item has been successfully delivered!")
                     st.success("Status Updated.")
+
+        elif choice == "Help":
+            st.markdown("<h1>🆘 Help & Support</h1>", unsafe_allow_html=True)
+            with st.form("da_report_issue", clear_on_submit=True):
+                issue_text = st.text_area("Describe your issue...")
+                if st.form_submit_button("Submit Issue"):
+                    if issue_text:
+                        create_help_ticket(st.session_state['user'], issue_text)
+                        st.success("Ticket Created!"); time.sleep(1); st.rerun()
+                    else: st.error("Please enter issue details.")
+
+        elif choice == "Profile":
+            u = get_user_details(st.session_state['user'])
+            st.markdown("<h1>👤 Delivery Agent Profile</h1>", unsafe_allow_html=True)
+            st.markdown(f"""
+            <div style="background: rgba(128,128,128,0.1); padding: 30px; border-radius: 15px; border: 1px solid rgba(255,255,255,0.1);">
+                <h2 style="background: -webkit-linear-gradient(45deg, #4facfe, #00f2fe); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">{u[1]}</h2>
+                <hr style="border-color: rgba(255,255,255,0.2);">
+                <p><b>Agent ID:</b> {u[0]}</p>
+                <p><b>Official Email:</b> {u[7]}</p>
+            </div>
+            """, unsafe_allow_html=True)
 
     elif st.session_state['role'] == 'admin':
         if choice == "Dashboard":
@@ -584,6 +844,7 @@ else:
             
         elif choice == "Users":
             st.markdown("<h1>👥 Manage Users</h1>", unsafe_allow_html=True)
+            st.write("### Pending Approvals")
             pending = get_data("SELECT * FROM userstable WHERE status='pending'")
             if pending:
                 for u in pending:
@@ -591,24 +852,61 @@ else:
                         c1, c2 = st.columns(2)
                         with c1: render_image(u[5], width=250)
                         with c2:
-                            st.write(f"**Branch:** {u[3]} | **Email:** {u[7]}")
+                            st.write(f"**Branch:** {u[3]} | **Year:** {u[4]}")
+                            st.write(f"**Email:** {u[7]}")
                             if st.button("Approve User ✅", key=f"app_{u[0]}", type="primary"):
                                 run_query("UPDATE userstable SET status='approved' WHERE username=?", (u[0],)); st.rerun()
                             if st.button("Reject User ❌", key=f"rej_{u[0]}"):
                                 run_query("DELETE FROM userstable WHERE username=?", (u[0],)); st.rerun()
-            else: st.info("No pending requests.")
+            else: st.info("No pending user requests.")
+
+            st.divider()
+            st.write("### All Active Students")
+            active_users = get_data("SELECT * FROM userstable WHERE status='approved'")
+            if active_users:
+                for u in active_users:
+                    with st.expander(f"User Profile: {u[1]} ({u[0]})"):
+                        st.write(f"**Email:** {u[7]}")
+                        st.write(f"**Course:** {u[3]} - {u[4]}")
+                        if st.button(f"Ban User (Delete) ⚠️", key=f"ban_{u[0]}"):
+                            run_query("DELETE FROM userstable WHERE username=?", (u[0],))
+                            st.warning(f"User {u[0]} has been banned."); st.rerun()
+            else: st.info("No active students found.")
 
         elif choice == "Products":
             st.markdown("<h1>📦 Manage Products</h1>", unsafe_allow_html=True)
+            st.write("### Pending Approvals")
             prods = get_data("SELECT * FROM productstable WHERE status='pending'")
             if prods:
                 for p in prods:
                     st.write(f"**{p[2]}** by {p[1]} (₹{p[4]})")
-                    if p[6]: render_image(p[6].split('|')[0], width=150)
+                    first_image = p[6].split('|')[0] if p[6] else None
+                    render_image(first_image, width=150)
                     if st.button(f"Approve Item {p[0]}", type="primary"):
                         run_query("UPDATE productstable SET status='approved' WHERE id=?", (p[0],)); st.rerun()
                     st.divider()
-            else: st.info("No pending products.")
+            else: st.info("No products waiting for approval.")
+
+        elif choice == "Delivery Agents":
+            st.markdown("<h1>🚚 Manage Delivery Agents</h1>", unsafe_allow_html=True)
+            with st.form("add_da"):
+                new_da_email = st.text_input("Add New Delivery Agent Email").strip()
+                if st.form_submit_button("Authorize Email ✅"):
+                    if new_da_email:
+                        add_delivery_agent_email(new_da_email)
+                        st.success(f"{new_da_email} is now authorized to Sign Up!"); st.rerun()
+            st.divider()
+            st.write("### Active Delivery Agents")
+            da_list = get_all_delivery_agents()
+            if da_list:
+                for m in da_list:
+                    c1, c2, c3 = st.columns([2,2,1])
+                    c1.write(f"**{m[1]}** (@{m[0]})")
+                    c2.write(f"{m[7]}")
+                    if c3.button("Revoke Access 🚫", key=f"rem_da_{m[0]}"):
+                        run_query("DELETE FROM userstable WHERE username=?", (m[0],))
+                        run_query("DELETE FROM delivery_agent_emails WHERE email=?", (m[7],)); st.rerun()
+            else: st.info("No active delivery agents.")
 
         elif choice == "Issues":
             st.markdown("<h1>🆘 Pending Help Tickets</h1>", unsafe_allow_html=True)
@@ -617,9 +915,18 @@ else:
                 for t in tickets:
                     with st.expander(f"Ticket #{t[0]} from {t[1]} ({t[5]})", expanded=True):
                         st.info(f"**Issue Description:** {t[2]}")
+                        if t[3]: render_image(t[3], caption="Attached Screenshot", width=400)
+                            
                         reply_key = f"rep_{t[0]}"
-                        reply_text = st.text_input("Reply (Optional)", key=reply_key)
-                        if st.button("Mark as Resolved ✅", key=f"res_{t[0]}", type="primary"):
-                            if reply_text: send_message('admin', t[1], f"RE: Ticket #{t[0]} - {reply_text}")
-                            resolve_ticket(t[0]); st.rerun()
-            else: st.success("No pending issues!")
+                        reply_text = st.text_input("Reply to User (Optional)", key=reply_key)
+                        c1, c2 = st.columns(2)
+                        if c1.button("Send Reply 📤", key=f"btn_rep_{t[0]}"):
+                            if reply_text:
+                                send_message('admin', t[1], f"RE: Ticket #{t[0]} - {reply_text}")
+                                st.success("Reply sent to user's inbox!")
+                        
+                        if c2.button("Mark as Resolved ✅", key=f"res_{t[0]}", type="primary"):
+                            resolve_ticket(t[0])
+                            st.success("Ticket Resolved!"); time.sleep(1); st.rerun()
+            else: st.success("No pending issues! Everything is looking good. ✨")here
+
