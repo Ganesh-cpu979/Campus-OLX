@@ -19,36 +19,36 @@ SENDER_PASSWORD = "bofd bzua sgau kzyv"
 # ----------------------------------------------------
 # 1. DATABASE SETUP (LOCAL SQLITE3)
 # ----------------------------------------------------
-def get_db_connection():
-    # Ye automatically tere folder me 'campus_olx.db' file bana dega
-    return sqlite3.connect('campus_olx.db', check_same_thread=False)
-
-def make_hashes(password):
-    return hashlib.sha256(str.encode(password)).hexdigest()
-
 def run_query(query, params=()):
     conn = get_db_connection()
-    c = conn.cursor()
-    c.execute(query, params)
-    conn.commit()
-    conn.close()
+    try:
+        c = conn.cursor()
+        c.execute(query, params)
+        conn.commit()
+    finally:
+        conn.close() 
+ def make_hashes(password):
+    return hashlib.sha256(str.encode(password)).hexdigest()
 
 def get_data(query, params=()):
     conn = get_db_connection()
-    c = conn.cursor()
-    c.execute(query, params)
-    data = c.fetchall()
-    conn.close()
-    return data
+    try:
+        c = conn.cursor()
+        c.execute(query, params)
+        data = c.fetchall()
+        return data
+    finally:
+        conn.close()
 
 def get_single_data(query, params=()):
     conn = get_db_connection()
-    c = conn.cursor()
-    c.execute(query, params)
-    data = c.fetchone()
-    conn.close()
-    return data
-
+    try:
+        c = conn.cursor()
+        c.execute(query, params)
+        data = c.fetchone()
+        return data
+    finally:
+        conn.close()
 def init_db():
     run_query('CREATE TABLE IF NOT EXISTS userstable(username TEXT PRIMARY KEY, fullname TEXT, password TEXT, course TEXT, year TEXT, id_card_path TEXT, status TEXT, email TEXT)')
     run_query('CREATE TABLE IF NOT EXISTS productstable(id INTEGER PRIMARY KEY AUTOINCREMENT, seller_name TEXT, product_name TEXT, product_cat TEXT, product_price TEXT, product_desc TEXT, product_img TEXT, type TEXT, status TEXT)')
