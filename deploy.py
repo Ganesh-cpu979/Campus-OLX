@@ -727,7 +727,7 @@ else:
                             st.write(f"**Branch:** {u[3]} | **Year:** {u[4]}")
                             st.write(f"**Email:** {u[7]}")
                             if st.button("Approve User ✅", key=f"app_{u[0]}", type="primary"):
-                                run_query("UPDATE userstable SET status='approved' WHERE username=?", (u[0],)); st.rerun()
+                                run_query("UPDATE userstable SET status='approved' WHERE username=%s", (u[0],)); st.rerun()
                             if st.button("Reject User ❌", key=f"rej_{u[0]}"):
                                 run_query("DELETE FROM userstable WHERE username=?", (u[0],)); st.rerun()
             else: st.info("No pending user requests.")
