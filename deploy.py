@@ -14,11 +14,19 @@ from datetime import datetime
 from streamlit_option_menu import option_menu
 
 # --- CONFIGURATION (User must fill this) ---
-SENDER_EMAIL = "ganeshjanapuri@gmail.com"  
-SENDER_PASSWORD = "bofd bzua sgau kzyv"
+SENDER_EMAIL = "your mail"  
+SENDER_PASSWORD = " two step mail verification password"  
+
 # ----------------------------------------------------
-# 1. DATABASE SETUP (LOCAL SQLITE3)
+# 1. DATABASE SETUP (LOCAL SQLITE3 WITH TIMEOUT & LOCK-FIX)
 # ----------------------------------------------------
+def get_db_connection():
+    # timeout=15 add kar diya hai taaki database lock hone par crash na ho!
+    return sqlite3.connect('campus_olx.db', check_same_thread=False, timeout=15)
+
+def make_hashes(password):
+    return hashlib.sha256(str.encode(password)).hexdigest()
+
 def run_query(query, params=()):
     conn = get_db_connection()
     try:
@@ -26,9 +34,7 @@ def run_query(query, params=()):
         c.execute(query, params)
         conn.commit()
     finally:
-        conn.close() 
- def make_hashes(password):
-    return hashlib.sha256(str.encode(password)).hexdigest()
+        conn.close()
 
 def get_data(query, params=()):
     conn = get_db_connection()
@@ -49,6 +55,7 @@ def get_single_data(query, params=()):
         return data
     finally:
         conn.close()
+
 def init_db():
     run_query('CREATE TABLE IF NOT EXISTS userstable(username TEXT PRIMARY KEY, fullname TEXT, password TEXT, course TEXT, year TEXT, id_card_path TEXT, status TEXT, email TEXT)')
     run_query('CREATE TABLE IF NOT EXISTS productstable(id INTEGER PRIMARY KEY AUTOINCREMENT, seller_name TEXT, product_name TEXT, product_cat TEXT, product_price TEXT, product_desc TEXT, product_img TEXT, type TEXT, status TEXT)')
@@ -727,7 +734,7 @@ else:
                             st.write(f"**Branch:** {u[3]} | **Year:** {u[4]}")
                             st.write(f"**Email:** {u[7]}")
                             if st.button("Approve User ✅", key=f"app_{u[0]}", type="primary"):
-                                run_query("UPDATE userstable SET status='approved' WHERE username=%s", (u[0],)); st.rerun()
+                                run_query("UPDATE userstable SET status='approved' WHERE username=?", (u[0],)); st.rerun()
                             if st.button("Reject User ❌", key=f"rej_{u[0]}"):
                                 run_query("DELETE FROM userstable WHERE username=?", (u[0],)); st.rerun()
             else: st.info("No pending user requests.")
